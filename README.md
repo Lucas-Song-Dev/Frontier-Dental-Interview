@@ -2,13 +2,17 @@
 
 A local prototype that extracts Safco Dental products from two categories, stores one row per child SKU, and can be queried or exported. Listing pagination is left unfetched because `robots.txt` disallows `?page=` and `?p=`.
 
-- [Product extraction](#product-extraction)
-- [Structured output](#structured-output)
-- [Pipeline](#pipeline)
+- [Architecture overview](#architecture-overview)
+- [Why you chose your approach](#why-you-chose-your-approach)
 - [Agent responsibilities](#agent-responsibilities)
-- [Production design](#production-design)
+- [Setup and execution](#setup-and-execution)
+- [Sample output schema](#sample-output-schema)
+- [Limitations](#limitations)
+- [Failure handling](#failure-handling)
+- [How you would scale to full-site crawling](#how-you-would-scale-to-full-site-crawling)
+- [How you would monitor data quality](#how-you-would-monitor-data-quality)
 
-## Architecture
+## Architecture overview
 
 ```
 config.yaml + settings
@@ -34,7 +38,7 @@ config.yaml + settings
 
 Fetch I/O is separate from the pipeline. Every live request goes through the robots check and a delay. The stages only see HTML that was already fetched, or the saved fixtures in `tests/fixtures/`. The scope model receives the body-class tokens and the breadcrumb text. It does not receive the page.
 
-## Why this shape
+## Why you chose your approach
 
 The product pages are regular. Parent name, brand, SKU, price, availability, description, and images are in JSON-LD. Every child SKU is already in `window.masterData`, including rows the on-page pager does not draw. A model is not required to read that.
 
@@ -159,7 +163,7 @@ The checked-in sample is 160 child rows across 25 parent products: 13 under sutu
 - The validator rejects a row with no name, and a second copy of a slug or child SKU.
 - Publish drops a row that fails `scope_path`, so a later export cannot put a Clearance row back into `data/sample/`.
 
-## Full-site crawling
+## How you would scale to full-site crawling
 
 1. Keep the robots check and the delay on every request. Do not add a switch that turns robots off.
 2. Fetch the two seed URLs from `config.yaml`, then one level of child category URLs under each seed. `catalog.xml` is not the crawler's category list.
@@ -171,7 +175,7 @@ The checked-in sample is 160 child rows across 25 parent products: 13 under sutu
 
 Raising `max_pages_per_category` continues that queue, so discovered links are not stuck behind sitemap order. Products that never appear as hrefs on those category pages are still only reached by walking `products.xml`. At 3 seconds per URL, the 3,939 product sitemap is a multi-hour run. The checkpoint table is what makes that resumable. This sample does not finish either category.
 
-## Data quality
+## How you would monitor data quality
 
 This prototype checks:
 
