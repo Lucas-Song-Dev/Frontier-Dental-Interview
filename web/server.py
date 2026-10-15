@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from chat import Reply, ask
 from claude import configured
+from crawl import crawl
 from db import (
     SCHEMA_DOC,
     SETTING_BOUNDS,
@@ -21,12 +23,27 @@ from db import (
     finish_job,
     get_settings,
     list_catalog_rows,
+    list_checkpoints,
     list_jobs,
+    list_steps,
     reload_catalog,
     save_settings,
     start_job,
+    update_job,
+    upsert_crawl,
 )
-from live import FetchBlocked, fetch_pages
+from export_catalog import (
+    COLUMNS,
+    csv_bytes,
+    json_bytes,
+    publish,
+    rows_from_catalog,
+    rows_in_scope,
+    xlsx_bytes,
+)
+from extract import extract_variants
+from live import FetchBlocked
+from pipeline import run as run_pipeline
 from queries import LEVELS, describe, normalize_level
 
 ROOT = Path(__file__).resolve().parent
@@ -49,6 +66,9 @@ class Variant:
     mfr: str
     stock: str
     price: str
+    pack_size: str = ""
+    specification: str = ""
+    attributes: str = "{}"
 
 
 @dataclass
@@ -60,6 +80,13 @@ class Product:
     availability: str
     category: str
     variants: list[Variant] = field(default_factory=list)
+    brand: str = ""
+    url: str = ""
+    description: str = ""
+    category_path: str = ""
+    image_urls: str = "[]"
+    alternatives: str = "[]"
+    attributes: str = "{}"
 
 
 @dataclass
@@ -84,6 +111,8 @@ class Catalog:
     categories: dict[str, Category]
     products: dict[str, Product]
     robots: str
+    steps: list[dict[str, str]] = field(default_factory=list)
+    checkpoints: list[dict[str, str]] = field(default_factory=list)
 
 
 def unescape(value: str) -> str:
@@ -95,88 +124,31 @@ def money(amount: str) -> str:
 
 
 def parse_master(page: str) -> list[Variant]:
-    marker = "window.masterData = "
-    start = page.find(marker)
-    if start < 0:
-        raise ValueError("masterData missing")
-    raw, _end = json.JSONDecoder().raw_decode(page[start + len(marker) :])
-    data = json.loads(raw) if isinstance(raw, str) else raw
-    if isinstance(data, list):
-        paired: dict[str, object] = {}
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            sku = str(item.get("sku") or item.get("product_sku") or "")
-            if sku:
-                paired[sku] = item
-        data = paired
-    if not isinstance(data, dict):
-        raise ValueError("masterData is not a product map")
-    variants: list[Variant] = []
-    for sku, item in data.items():
-        if not isinstance(item, dict):
-            continue
-        price_html = item.get("price") or ""
-        if isinstance(price_html, dict):
-            price_html = price_html.get("price") or ""
-        amounts = re.findall(r'data-price-amount="([0-9.]+)"', price_html)
-        variants.append(
-            Variant(
-                sku=str(sku),
-                name=unescape(str(item.get("name") or "")),
-                group=unescape(str(item.get("itemgroup") or "")),
-                mfr=unescape(str(item.get("manufacturer_part_number") or "")),
-                stock=unescape(str(item.get("stock_availability_label") or "")),
-                price=money(amounts[0]) if amounts else "",
-            )
+    return [
+        Variant(
+            sku=row.sku,
+            name=row.name,
+            group=row.group,
+            mfr=row.mfr,
+            stock=row.stock,
+            price=row.price,
+            pack_size=row.pack_size,
+            specification=row.specification,
+            attributes=row.attributes,
         )
-    variants.sort(key=lambda row: (row.group, row.name, row.sku))
-    return variants
-
-
-def json_ld_product(page: str) -> dict:
-    for match in re.finditer(
-        r'<script type="application/ld\+json">(.*?)</script>', page, re.S
-    ):
-        try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            continue
-        nodes = data if isinstance(data, list) else [data]
-        for node in nodes:
-            if isinstance(node, dict) and node.get("@type") == "Product":
-                return node
-    return {}
-
-
-def availability_label(offer: object) -> str:
-    if not isinstance(offer, dict):
-        return ""
-    raw = str(offer.get("availability") or "")
-    if raw.endswith("InStock"):
-        return "In stock"
-    if raw.endswith("OutOfStock"):
-        return "Out of stock"
-    return raw.rsplit("/", 1)[-1]
+        for row in extract_variants(page)
+    ]
 
 
 def parse_product(path: Path, slug: str, category: str) -> Product:
     return parse_product_html(path.read_text(encoding="utf-8"), slug, category)
 
 
-def parse_product_html(page: str, slug: str, category: str) -> Product:
-    linked = json_ld_product(page)
-    offers = linked.get("offers") or {}
-    price = offers.get("price") if isinstance(offers, dict) else ""
-    return Product(
-        slug=slug,
-        name=unescape(str(linked.get("name") or slug)),
-        sku=unescape(str(linked.get("sku") or "")),
-        price=money(str(price)) if price else "",
-        availability=availability_label(offers),
-        category=category,
-        variants=parse_master(page),
-    )
+def parse_product_html(page: str, slug: str, category: str, url: str = "") -> Product:
+    from extract import extract_product
+
+    parsed = extract_product(page, slug, category, url)
+    return _product_from_parsed(parsed)
 
 
 def parse_listing(path: Path, key: str) -> Category:
@@ -219,29 +191,78 @@ def parse_listing_html(page: str, key: str) -> Category:
     return Category(key=key, title=title, stats=stats, cards=cards)
 
 
+def _product_from_parsed(parsed: object) -> Product:
+    return Product(
+        slug=parsed.slug,  # type: ignore[attr-defined]
+        name=parsed.name,  # type: ignore[attr-defined]
+        sku=parsed.sku,  # type: ignore[attr-defined]
+        price=parsed.price,  # type: ignore[attr-defined]
+        availability=parsed.availability,  # type: ignore[attr-defined]
+        category=parsed.category,  # type: ignore[attr-defined]
+        variants=[
+            Variant(
+                sku=row.sku,
+                name=row.name,
+                group=row.group,
+                mfr=row.mfr,
+                stock=row.stock,
+                price=row.price,
+                pack_size=row.pack_size,
+                specification=row.specification,
+                attributes=row.attributes,
+            )
+            for row in parsed.variants  # type: ignore[attr-defined]
+        ],
+        brand=parsed.brand,  # type: ignore[attr-defined]
+        url=parsed.url,  # type: ignore[attr-defined]
+        description=parsed.description,  # type: ignore[attr-defined]
+        category_path=parsed.category_path,  # type: ignore[attr-defined]
+        image_urls=parsed.image_urls,  # type: ignore[attr-defined]
+        alternatives=parsed.alternatives,  # type: ignore[attr-defined]
+        attributes=parsed.attributes,  # type: ignore[attr-defined]
+    )
+
+
 def build_catalog() -> Catalog:
-    products = {
-        "surgifoam-reg": parse_product(
-            FIXTURES / "product_a.html", "surgifoam-reg", "sutures"
-        ),
-        "perma-sharp-reg-sutures": parse_product(
-            FIXTURES / "product_variants.html",
-            "perma-sharp-reg-sutures",
-            "sutures",
-        ),
-        "lavender-nitrile": parse_product(
-            FIXTURES / "product_b.html", "lavender-nitrile", "gloves"
-        ),
-    }
-    categories = {
-        "sutures": parse_listing(FIXTURES / "listing_sutures.html", "sutures"),
-        "gloves": parse_listing(FIXTURES / "listing_gloves.html", "gloves"),
-    }
-    for category in categories.values():
-        for card in category.cards:
-            card.saved = card.slug in products
     robots = ROBOTS.read_text(encoding="utf-8")
-    return Catalog(categories=categories, products=products, robots=robots)
+
+    def read(name: str) -> str:
+        return (FIXTURES / name).read_text(encoding="utf-8")
+
+    return catalog_from_live(
+        robots,
+        {
+            "listings": [
+                (
+                    "sutures",
+                    "https://www.safcodental.com/catalog/sutures-surgical-products",
+                    read("listing_sutures.html"),
+                ),
+                ("gloves", "https://www.safcodental.com/catalog/gloves", read("listing_gloves.html")),
+            ],
+            "products": [
+                (
+                    "surgifoam-reg",
+                    "sutures",
+                    "https://www.safcodental.com/product/surgifoam-reg",
+                    read("product_a.html"),
+                ),
+                (
+                    "perma-sharp-reg-sutures",
+                    "sutures",
+                    "https://www.safcodental.com/product/perma-sharp-reg-sutures",
+                    read("product_variants.html"),
+                ),
+                (
+                    "lavender-nitrile",
+                    "gloves",
+                    "https://www.safcodental.com/product/lavender-nitrile",
+                    read("product_b.html"),
+                ),
+            ],
+            "note": "Saved HTML fixtures.",
+        },
+    )
 
 
 def esc(value: object) -> str:
@@ -307,7 +328,7 @@ def layout(title: str, current: str, body: str) -> str:
     <aside class="rail" id="rail">
       <div>
         <a class="brand" href="/">Catalog desk</a>
-        <p class="rail-note">Safco extraction agent</p>
+        <p class="rail-note">Safco catalog desk</p>
       </div>
       <nav aria-label="Catalog">
         <p class="rail-label">Catalog</p>
@@ -529,6 +550,7 @@ def product_page(catalog: Catalog, slug: str) -> str | None:
             f"<td>{esc(row.name)}</td>"
             f"{group_cell}"
             f"<td>{esc(row.mfr)}</td>"
+            f"<td>{esc(row.pack_size)}</td>"
             f"<td>{esc(row.stock)}</td>"
             f'<td class="num">{esc(row.price)}</td>'
             "</tr>"
@@ -543,11 +565,15 @@ def product_page(catalog: Catalog, slug: str) -> str | None:
 </nav>
 <h1>{esc(product.name)}</h1>
 <dl class="identity">
+  <div><dt>Brand</dt><dd>{esc(product.brand)}</dd></div>
   <div><dt>Parent SKU</dt><dd>{esc(product.sku)}</dd></div>
-  <div><dt>JSON-LD price</dt><dd>{esc(product.price)}</dd></div>
+  <div><dt>Category</dt><dd>{esc(product.category_path)}</dd></div>
+  <div><dt>URL</dt><dd><a href="{esc(product.url)}">{esc(product.url)}</a></dd></div>
+  <div><dt>Price</dt><dd>{esc(product.price)}</dd></div>
   <div><dt>Availability</dt><dd>{esc(product.availability)}</dd></div>
   <div><dt>Child SKUs</dt><dd>{len(product.variants)}</dd></div>
 </dl>
+<p>{esc(product.description)}</p>
 <div class="scroll">
   <table class="sheet">
     <caption>Child rows from window.masterData in the saved product HTML.</caption>
@@ -557,6 +583,7 @@ def product_page(catalog: Catalog, slug: str) -> str | None:
         <th scope="col">Name</th>
         {group_head}
         <th scope="col">Mfr #</th>
+        <th scope="col">Pack</th>
         <th scope="col">Stock</th>
         <th scope="col" class="num">Price</th>
       </tr>
@@ -720,6 +747,19 @@ function addExchange(question, data) {{
   article.scrollIntoView({{block: "nearest"}});
 }}
 
+field.addEventListener("keydown", (event) => {{
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  if (event.shiftKey) {{
+    const start = field.selectionStart ?? field.value.length;
+    const end = field.selectionEnd ?? start;
+    field.value = field.value.slice(0, start) + "\\n" + field.value.slice(end);
+    field.selectionStart = field.selectionEnd = start + 1;
+    return;
+  }}
+  form.requestSubmit();
+}});
+
 form.addEventListener("submit", async (event) => {{
   event.preventDefault();
   const question = field.value.trim();
@@ -826,11 +866,11 @@ def settings_page(error: str = "", saved: bool = False) -> str:
       {''.join(f'<option value="{name}"{" selected" if settings["user_level"] == name else ""}>{name.capitalize()}</option>' for name in LEVELS)}
     </select>
   </div>
-  {_setting_field("crawl_interval_minutes", "Time between crawls", "Minutes from the end of one run until the next run may start. 15 to 10080.", settings, 15, 10080)}
-  {_setting_field("min_delay_seconds", "Minimum delay", "Seconds between requests. Kept at or above 1, and never below a robots Crawl-delay when one exists.", settings, 1, 60)}
-  {_setting_field("max_concurrency", "Max concurrency", "How many page fetches may run at once. Capped at 2.", settings, 1, 2)}
-  {_setting_field("max_products", "Max products per run", "Stop a run after this many parent products. 1 to 5000.", settings, 1, 5000)}
-  {_setting_field("max_pages_per_category", "Max pages per category", "Cap for a future allowed discovery path. Live ?page= links stay disallowed.", settings, 1, 20)}
+  {_setting_field("crawl_interval_minutes", "Time between crawls", "Stored for a later worker. This desk does not start a crawl on a timer. 15 to 10080.", settings, 15, 10080)}
+  {_setting_field("min_delay_seconds", "Minimum delay", "Seconds between requests. Kept at or above 1. SQLite overrides config.yaml for a desk run.", settings, 1, 60)}
+  {_setting_field("max_concurrency", "Max concurrency", "Stored for a later worker. This desk fetches one page at a time so the delay stays a single clock.", settings, 1, 2)}
+  {_setting_field("max_products", "Max products per run", "Stop after this many newly kept parent products. 1 to 5000.", settings, 1, 5000)}
+  {_setting_field("max_pages_per_category", "Product fetches per run", "How many product pages one run may request. Extracted and out-of-scope URLs are skipped. ?page= stays disallowed.", settings, 1, 20)}
   <div class="field">
     <p class="hint">Seeds stay fixed for this assignment.</p>
     <ul class="seeds">
@@ -845,33 +885,40 @@ def settings_page(error: str = "", saved: bool = False) -> str:
 
 
 def catalog_from_live(robots: str, pages: dict[str, object]) -> Catalog:
-    categories: dict[str, Category] = {}
     listings = pages["listings"]
-    assert isinstance(listings, list)
-    fixture_listings = {
-        "sutures": FIXTURES / "listing_sutures.html",
-        "gloves": FIXTURES / "listing_gloves.html",
-    }
-    for key, _url, html_text in listings:
-        category = parse_listing_html(str(html_text), str(key))
-        if not category.cards and str(key) in fixture_listings:
-            saved = parse_listing(fixture_listings[str(key)], str(key))
-            category.cards = saved.cards
-            if saved.stats:
-                category.stats = saved.stats
-        categories[str(key)] = category
-    products: dict[str, Product] = {}
     fetched_products = pages["products"]
+    assert isinstance(listings, list)
     assert isinstance(fetched_products, list)
-    for slug, category, _url, html_text in fetched_products:
-        try:
-            products[str(slug)] = parse_product_html(str(html_text), str(slug), str(category))
-        except (ValueError, AttributeError, TypeError):
-            continue
+    trace = run_pipeline(listings, fetched_products)
+    categories: dict[str, Category] = {}
+    for parsed in trace.listings:
+        category = Category(
+            key=parsed.key,
+            title=parsed.title,
+            stats=parsed.stats,
+            cards=[
+                ListingCard(
+                    slug=card.slug,
+                    name=card.name,
+                    manufacturer=card.manufacturer,
+                    price=card.price,
+                    saved=False,
+                )
+                for card in parsed.cards
+            ],
+        )
+        categories[parsed.key] = category
+    products = {parsed.slug: _product_from_parsed(parsed) for parsed in trace.products}
     for category in categories.values():
         for card in category.cards:
             card.saved = card.slug in products
-    return Catalog(categories=categories, products=products, robots=robots)
+    return Catalog(
+        categories=categories,
+        products=products,
+        robots=robots,
+        steps=trace.steps,
+        checkpoints=trace.checkpoints,
+    )
 
 
 def _stored_price(value: object) -> str:
@@ -893,10 +940,18 @@ def load_catalog() -> Catalog | None:
             "SELECT category_key, slug, name, manufacturer, price_amount, saved FROM listing_cards"
         ).fetchall()
         product_rows = connection.execute(
-            "SELECT slug, category_key, name, parent_sku, price_amount, availability FROM products"
+            "SELECT slug, category_key, name, parent_sku, price_amount, availability, "
+            "brand, url, description, category_path, image_urls, alternatives, attributes FROM products"
         ).fetchall()
         variant_rows = connection.execute(
-            "SELECT sku, product_slug, name, item_group, mfr_number, stock, price_amount FROM variants"
+            "SELECT sku, product_slug, name, item_group, mfr_number, stock, price_amount, "
+            "pack_size, specification, attributes FROM variants"
+        ).fetchall()
+        step_rows = connection.execute(
+            "SELECT stage, subject, outcome, detail FROM agent_steps ORDER BY position"
+        ).fetchall()
+        checkpoint_rows = connection.execute(
+            "SELECT url, status, stage, detail FROM checkpoints ORDER BY url"
         ).fetchall()
     finally:
         connection.close()
@@ -930,6 +985,9 @@ def load_catalog() -> Catalog | None:
                 mfr=str(row["mfr_number"]),
                 stock=str(row["stock"]),
                 price=_stored_price(row["price_amount"]),
+                pack_size=str(row["pack_size"] or ""),
+                specification=str(row["specification"] or ""),
+                attributes=str(row["attributes"] or "{}"),
             )
         )
     products = {
@@ -941,35 +999,91 @@ def load_catalog() -> Catalog | None:
             availability=str(row["availability"]),
             category=str(row["category_key"]),
             variants=variants_by_product.get(str(row["slug"]), []),
+            brand=str(row["brand"] or ""),
+            url=str(row["url"] or ""),
+            description=str(row["description"] or ""),
+            category_path=str(row["category_path"] or ""),
+            image_urls=str(row["image_urls"] or "[]"),
+            alternatives=str(row["alternatives"] or "[]"),
+            attributes=str(row["attributes"] or "{}"),
         )
         for row in product_rows
     }
-    return Catalog(categories=categories, products=products, robots=ROBOTS.read_text(encoding="utf-8"))
+    return Catalog(
+        categories=categories,
+        products=products,
+        robots=ROBOTS.read_text(encoding="utf-8"),
+        steps=[{key: str(row[key]) for key in row.keys()} for row in step_rows],
+        checkpoints=[{key: str(row[key]) for key in row.keys()} for row in checkpoint_rows],
+    )
 
 
-def refresh_snapshot() -> None:
-    global CATALOG
-    job_id = start_job("live_fetch")
-    known = [(product.slug, product.category) for product in CATALOG.products.values()]
+_refresh_guard = threading.Lock()
+_running_job_id: int | None = None
+
+
+def begin_refresh() -> int:
+    """Record a running job and fetch in the background. A second call returns that same job."""
+    global _running_job_id
+    with _refresh_guard:
+        if _running_job_id is not None:
+            return _running_job_id
+        job_id = start_job("live_fetch")
+        _running_job_id = job_id
+        threading.Thread(
+            target=_run_refresh,
+            args=(job_id,),
+            name="catalog-refresh",
+            daemon=True,
+        ).start()
+        return job_id
+
+
+def _run_refresh(job_id: int) -> None:
+    global CATALOG, _running_job_id
     try:
-        robots, pages = fetch_pages(known)
+        robots, pages = crawl(on_progress=lambda message: update_job(job_id, message))
         catalog = catalog_from_live(robots, pages)
-        if not catalog.products:
-            raise RuntimeError("The live pages did not include a product sheet.")
-        counts = reload_catalog(catalog)
-        CATALOG = catalog
-        note = str(pages["note"]) + " Page-1 listing cards stay from the saved HTML because the live grid is rendered in the browser."
+        failed = pages["failed"]
+        assert isinstance(failed, list)
+        for item in failed:
+            assert isinstance(item, dict)
+            catalog.checkpoints.append(
+                {
+                    "url": str(item["url"]),
+                    "status": "failed",
+                    "stage": "retry",
+                    "detail": str(item["detail"]),
+                }
+            )
+        counts = upsert_crawl(catalog)
+        loaded = load_catalog()
+        if loaded is not None:
+            CATALOG = loaded
+        publish(CATALOG, catalog.steps)
+        note = _crawl_note(catalog, int(pages["attempts"]), len(failed))
         finish_job(job_id, "completed", message=note, **counts)
     except FetchBlocked as exc:
         finish_job(job_id, "failed", message=str(exc))
-        raise
     except Exception as exc:
         finish_job(job_id, "failed", message=str(exc))
-        raise
+    finally:
+        with _refresh_guard:
+            if _running_job_id == job_id:
+                _running_job_id = None
+
+
+def _crawl_note(catalog: Catalog, attempts: int, failed: int) -> str:
+    out_of_scope = sum(1 for item in catalog.checkpoints if item["status"] == "out_of_scope")
+    unresolved = sum(1 for item in catalog.checkpoints if item["status"] == "unresolved")
+    return (
+        f"Fetched {attempts} product pages. Kept {len(catalog.products)}. "
+        f"Out of scope {out_of_scope}. Unresolved {unresolved}. Failed {failed}."
+    )
 
 
 def safe_next(value: str) -> str:
-    if value in {"/", "/jobs", "/chat", "/settings", "/gate", "/data"}:
+    if value in {"/", "/jobs", "/chat", "/settings", "/links", "/gate", "/data"}:
         return value
     if re.fullmatch(r"/jobs/\d+", value):
         return value
@@ -998,6 +1112,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/schema":
             self._bytes(200, "text/plain; charset=utf-8", SCHEMA_DOC.encode("utf-8"))
             return
+        if path == "/api/pipeline":
+            self._json(200, _pipeline_payload())
+            return
+        export = {"/api/export.csv": "csv", "/api/export.json": "json", "/api/export.xlsx": "xlsx"}.get(path)
+        if export:
+            self._export(export)
+            return
         if path == "/api/queries":
             level = normalize_level(get_settings()["user_level"])
             self._json(200, {"level": level, "claude": configured(), "queries": describe(level)})
@@ -1025,6 +1146,10 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             self._json(404, {"error": "Unknown API."})
             return
+        image = re.fullmatch(r"/images/([a-z0-9-]+\.(?:jpg|jpeg|png|webp))", path)
+        if image:
+            self._image(image.group(1))
+            return
         self._spa(path)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -1036,11 +1161,11 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         if path == "/api/refresh":
             try:
-                refresh_snapshot()
+                job_id = begin_refresh()
             except Exception as exc:
                 self._json(500, {"ok": False, "error": str(exc)})
                 return
-            self._json(200, {"ok": True})
+            self._json(200, {"ok": True, "job_id": job_id, "status": "running"})
             return
         if path == "/api/settings":
             try:
@@ -1063,7 +1188,7 @@ class Handler(BaseHTTPRequestHandler):
             form = parse_qs(raw.decode("utf-8"))
             target = safe_next((form.get("next") or ["/jobs"])[0])
             try:
-                refresh_snapshot()
+                begin_refresh()
             except Exception:
                 target = "/jobs"
             self._redirect(target)
@@ -1124,6 +1249,38 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._bytes(200, "text/html; charset=utf-8", index.read_bytes())
 
+    def _image(self, name: str) -> None:
+        path = (ROOT.parent / "data" / "sample" / "images" / name).resolve()
+        root = (ROOT.parent / "data" / "sample" / "images").resolve()
+        if path.parent != root or not path.is_file():
+            self._json(404, {"error": "Image not saved."})
+            return
+        kind = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }.get(path.suffix, "application/octet-stream")
+        self._bytes(200, kind, path.read_bytes())
+
+    def _export(self, kind: str) -> None:
+        rows = rows_in_scope(rows_from_catalog(CATALOG))
+        if kind == "csv":
+            payload, mime, name = csv_bytes(rows), "text/csv; charset=utf-8", "safco-catalog.csv"
+        elif kind == "json":
+            payload, mime, name = json_bytes(rows), "application/json; charset=utf-8", "safco-catalog.json"
+        else:
+            payload = xlsx_bytes(rows)
+            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            name = "safco-catalog.xlsx"
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def _redirect(self, location: str) -> None:
         self.send_response(303)
         self.send_header("Location", location)
@@ -1182,6 +1339,7 @@ def _catalog_payload() -> dict:
                 "availability": product.availability,
                 "category": product.category,
                 "variants": len(product.variants),
+                "image": next(iter(_json_list(product.image_urls)), ""),
             }
             for product in CATALOG.products.values()
         ],
@@ -1215,6 +1373,12 @@ def _product_payload(slug: str) -> dict | None:
         "availability": product.availability,
         "category": product.category,
         "category_title": category.title,
+        "brand": product.brand,
+        "url": product.url,
+        "description": product.description,
+        "category_path": product.category_path,
+        "images": _json_list(product.image_urls),
+        "alternatives": _json_list(product.alternatives),
         "variants": [
             {
                 "sku": row.sku,
@@ -1223,8 +1387,52 @@ def _product_payload(slug: str) -> dict | None:
                 "mfr": row.mfr,
                 "stock": row.stock,
                 "price": row.price,
+                "pack_size": row.pack_size,
+                "specification": row.specification,
             }
             for row in product.variants
+        ],
+    }
+
+
+def _json_list(value: str) -> list[object]:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, list):
+        return parsed
+    return []
+
+
+def _pipeline_payload() -> dict[str, object]:
+    from config import load_config
+
+    config = load_config()
+    steps = CATALOG.steps or list_steps()
+    checkpoints = CATALOG.checkpoints or list_checkpoints()
+    return {
+        "stages": [
+            {"id": "navigator", "role": "Chooses the next allowed URLs: product links on the seed and one level of child category pages, then the rest of the sitemap. Records ?page= and ?p= links without fetching them."},
+            {"id": "classifier", "role": "Labels each fetched page as listing, product, or other from the URL and from JSON-LD, masterData, or the Algolia hit list."},
+            {"id": "extractor", "role": "Reads parent fields from JSON-LD and breadcrumbs, and child SKUs, pack size, stock, and price from masterData."},
+            {"id": "validator", "role": "Requires a name and a SKU, drops a repeated child SKU, and keeps a product only when the page is in sutures or gloves. When the body class and the breadcrumb each name a seed and they differ, asks the model. An out-of-scope breadcrumb is rejected without a model."},
+            {"id": "retry", "role": "Skips a product page that has neither masterData nor JSON-LD. A page with only JSON-LD is kept when it is in scope. A scope model that does not choose leaves the page unresolved."},
+        ],
+        "steps": steps,
+        "checkpoints": checkpoints,
+        "schema": [{"name": key, "description": note} for key, note in COLUMNS],
+        "exports": ["/api/export.csv", "/api/export.json", "/api/export.xlsx"],
+        "production": [
+            {"title": "Rate limiting", "body": f"Live fetches wait at least {config['min_delay_seconds']} seconds. Settings can raise that delay and cannot set it below 1."},
+            {"title": "Retries", "body": "429, 5xx, and timeouts are retried a few times. Each attempt waits on the same delay and passes the robots check. Other 4xx responses are not retried."},
+            {"title": "Checkpointing", "body": "Extracted and out-of-scope URLs are skipped on the next run. Unresolved and failed URLs are fetched again."},
+            {"title": "Logging", "body": "Pipeline stages are stored in agent_steps and written to data/sample/pipeline-log.jsonl. Secrets are not logged."},
+            {"title": "Deduplication", "body": "The validator keeps the first row for each child SKU."},
+            {"title": "Idempotency", "body": "A crawl upserts the parents it kept. A URL checkpointed out of scope drops that parent and its child SKUs. Other parents stay. Re-extracting a parent replaces only that parent's child SKUs."},
+            {"title": "Config", "body": "Seeds, delay, and the user agent live in config.yaml. Crawl caps live in SQLite settings."},
+            {"title": "Secrets", "body": "CLAUDE_API_KEY stays in .env. A scope conflict sends the class tokens and the breadcrumb, not the page HTML. The key is not written to the pipeline log."},
+            {"title": "Deployment", "body": "This desk is one process and a SQLite file. A full-site run fetches child category pages under the seeds, then resumes through products.xml. The checkpoint table is the queue."},
         ],
     }
 
@@ -1271,10 +1479,10 @@ def _reply_payload(reply: Reply) -> dict:
 def open_catalog() -> Catalog:
     """Use the saved snapshot when one exists. Seed the fixtures only on an empty database."""
     global CATALOG
-    ensure_database()
+    rebuild = ensure_database()
     ensure_settings()
     loaded = load_catalog()
-    if loaded is None:
+    if loaded is None or rebuild:
         reload_catalog(CATALOG)
         return CATALOG
     CATALOG = loaded

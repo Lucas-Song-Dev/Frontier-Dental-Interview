@@ -81,6 +81,14 @@ QUERIES: tuple[QuerySpec, ...] = (
         "FROM catalog_rows WHERE category_key = 'gloves' ORDER BY product_name, sku",
     ),
     QuerySpec(
+        "product_identity",
+        "Brand, pack size, and category",
+        "viewer",
+        "Show brand, pack size, and category path",
+        "SELECT product_name, brand, sku, pack_size, category_path, url "
+        "FROM catalog_rows ORDER BY category_path, product_name, sku",
+    ),
+    QuerySpec(
         "listing_cards",
         "Saved listing cards",
         "viewer",

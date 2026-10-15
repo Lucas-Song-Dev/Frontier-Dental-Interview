@@ -30,6 +30,10 @@ export function getSettings() {
   return getJSON("/api/settings");
 }
 
+export function getPipeline() {
+  return getJSON("/api/pipeline");
+}
+
 export async function saveSettings(settings) {
   const response = await fetch("/api/settings", {
     method: "POST",

@@ -45,12 +45,17 @@ def ask(question: str, *, query_id: str = "", sku: str = "") -> Reply:
     via = "list"
     if configured():
         catalog = [item for item in describe(level) if item["allowed"]]
-        chosen_id, params, failed = choose(text, catalog)
+        choice = choose(text, catalog)
         via = "claude"
-        if not chosen_id:
+        if choice.query_id:
+            chosen_id = choice.query_id
+            params = choice.params
+        else:
             local = match_question(text)
             if local is None:
-                note = "Claude could not choose a listed query." if failed else "No listed query matches."
+                if choice.answer and not choice.failed:
+                    return Reply(choice.answer, "", [], [])
+                note = "Claude could not choose a listed query." if choice.failed else "No listed query matches."
                 return Reply(note, "", [], [])
             chosen_id, params = local
             via = "fallback"

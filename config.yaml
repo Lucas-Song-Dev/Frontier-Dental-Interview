@@ -1,0 +1,7 @@
+origin: https://www.safcodental.com
+user_agent: CatalogDesk/0.1 (local catalog desk; respects robots.txt)
+min_delay_seconds: 3
+max_products: 40
+seeds:
+  sutures: https://www.safcodental.com/catalog/sutures-surgical-products
+  gloves: https://www.safcodental.com/catalog/gloves

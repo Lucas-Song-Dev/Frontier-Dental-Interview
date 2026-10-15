@@ -24,9 +24,16 @@ LIST_MASTER = (
 )
 
 
-def _product_page(master: str) -> str:
+def _product_page(master: str, crumb: str = "Sutures &amp; surgical products") -> str:
+    nav = ""
+    if crumb:
+        nav = (
+            '<nav class="breadcrumbs"><a>Home</a><a>'
+            f"{crumb}</a><span class=\"breadcrumb-last-node\">Widget</span></nav>"
+        )
     return (
-        '<script type="application/ld+json">'
+        nav
+        + '<script type="application/ld+json">'
         '{"@type":"Product","name":"Widget","sku":"PARENT",'
         '"offers":{"price":"1.00","availability":"https://schema.org/InStock"}}'
         "</script>"
@@ -81,12 +88,20 @@ class MasterDataTests(unittest.TestCase):
                         "https://www.safcodental.com/product/broken",
                         "<html>no masterData</html>",
                     ),
+                    (
+                        "orphan",
+                        "sutures",
+                        "https://www.safcodental.com/product/orphan",
+                        _product_page(LIST_MASTER, crumb=""),
+                    ),
                 ],
                 "note": "",
             },
         )
         self.assertEqual(list(catalog.products), ["widget"])
         self.assertEqual(catalog.products["widget"].variants[0].sku, "ABC")
+        self.assertEqual(catalog.categories["sutures"].cards, [])
+        self.assertTrue(any(item["status"] == "unresolved" for item in catalog.checkpoints))
 
 
 class FetchTests(unittest.TestCase):
@@ -94,7 +109,13 @@ class FetchTests(unittest.TestCase):
         bundle = live._ca_bundle()
         captured: dict[str, object] = {}
 
+        class _Headers:
+            def get(self, _key: str, default: str = "") -> str:
+                return default
+
         class _Response:
+            headers = _Headers()
+
             def __enter__(self) -> _Response:
                 return self
 

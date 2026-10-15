@@ -10,67 +10,41 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
-from db import get_settings
-
 ORIGIN = "https://www.safcodental.com"
 ROBOTS_URL = f"{ORIGIN}/robots.txt"
-SITEMAP_URL = f"{ORIGIN}/sitemap.xml"
-SEEDS = (
-    ("sutures", f"{ORIGIN}/catalog/sutures-surgical-products"),
-    ("gloves", f"{ORIGIN}/catalog/gloves"),
-)
-USER_AGENT = "CatalogDesk/0.1 (local catalog desk; respects robots.txt)"
+ATTEMPTS = 3
 
 
 class FetchBlocked(Exception):
     """robots.txt disallows this URL, so it was not requested."""
 
 
-def fetch_pages(known_products: list[tuple[str, str]]) -> tuple[str, dict[str, object]]:
-    """Return the live robots body and the pages that were allowed.
+class FetchFailed(RuntimeError):
+    """A fetch failed. retryable is set for 429, 5xx, and timeouts."""
 
-    known_products is (slug, category) for product URLs already on the desk.
-    Those /product/ URLs are allowed. Pagination URLs are not.
-    """
-    delay = int(get_settings()["min_delay_seconds"])
-    cap = int(get_settings()["max_products"])
-    clock = _Clock(delay)
-    robots = _get(ROBOTS_URL, clock, [])
-    rules = _disallow_rules(robots)
-    listings: list[tuple[str, str, str]] = []
-    for key, url in SEEDS:
-        _require_allowed(url, rules)
-        listings.append((key, url, _get(url, clock, rules)))
-    discovered: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for slug, category in known_products:
-        seen.add(slug)
-        discovered.append((slug, category))
-    for key, _url, html in listings:
-        for slug in _product_slugs(html):
-            if slug in seen:
-                continue
-            seen.add(slug)
-            discovered.append((slug, key))
-    for slug in _sitemap_slugs(clock, rules):
-        if slug in seen:
-            continue
-        seen.add(slug)
-        discovered.append((slug, _category_for_slug(slug)))
-    products: list[tuple[str, str, str, str]] = []
-    skipped: list[str] = []
-    for slug, category in discovered[:cap]:
-        url = f"{ORIGIN}/product/{slug}"
-        _require_allowed(url, rules)
-        try:
-            products.append((slug, category, url, _get(url, clock, rules)))
-        except RuntimeError as exc:
-            skipped.append(str(exc))
-    fetched = [url for _key, url, _html in listings] + [url for _slug, _category, url, _html in products]
-    note = f"Fetched {len(fetched)} URLs from safcodental.com. " + " ".join(fetched)
-    if skipped:
-        note += " Skipped: " + "; ".join(skipped)
-    return robots, {"listings": listings, "products": products, "note": note}
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def origin() -> str:
+    from config import load_config
+
+    return str(load_config()["origin"]).rstrip("/")
+
+
+def user_agent() -> str:
+    from config import load_config
+
+    return str(load_config()["user_agent"])
+
+
+def seeds() -> list[tuple[str, str]]:
+    from config import load_config
+
+    raw = load_config()["seeds"]
+    assert isinstance(raw, dict)
+    return [(str(key), str(url)) for key, url in raw.items()]
 
 
 def _require_allowed(url: str, rules: list[str]) -> None:
@@ -117,15 +91,10 @@ def _matches(pattern: str, path: str) -> bool:
     return re.match("".join(parts), path) is not None
 
 
-def _category_for_slug(slug: str) -> str:
-    if "glove" in slug or "nitrile" in slug:
-        return "gloves"
-    return "sutures"
-
-
 def _sitemap_slugs(clock: _Clock, rules: list[str]) -> list[str]:
-    _require_allowed(SITEMAP_URL, rules)
-    index = _get(SITEMAP_URL, clock, rules)
+    sitemap_url = f"{origin()}/sitemap.xml"
+    _require_allowed(sitemap_url, rules)
+    index = _get(sitemap_url, clock, rules)
     maps = [loc for loc in re.findall(r"<loc>\s*([^<]+?)\s*</loc>", index) if "product" in loc.lower()]
     slugs: list[str] = []
     for loc in maps:
@@ -143,13 +112,31 @@ def _sitemap_slugs(clock: _Clock, rules: list[str]) -> list[str]:
 def _product_slugs(html: str) -> list[str]:
     slugs: list[str] = []
     seen: set[str] = set()
-    for match in re.finditer(r'href="https://www\.safcodental\.com/product/([^"?#]+)"', html):
+    pattern = rf'href="{re.escape(origin())}/product/([^"?#]+)"'
+    for match in re.finditer(pattern, html):
         slug = match.group(1).strip("/")
         if not slug or slug in seen:
             continue
         seen.add(slug)
         slugs.append(slug)
     return slugs
+
+
+def child_category_urls(html: str, seed_url: str) -> list[str]:
+    """Category URLs one level under a seed. Query strings are excluded."""
+    seed = seed_url.split("?", 1)[0].rstrip("/")
+    pattern = rf'href="({re.escape(origin())}/catalog/[^"?#]+)"'
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(pattern, html):
+        href = match.group(1).rstrip("/")
+        if href == seed or not href.startswith(seed + "/"):
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+        found.append(href)
+    return found
 
 
 class _Clock:
@@ -184,16 +171,41 @@ def _ssl_context() -> ssl.SSLContext:
 
 
 def _get(url: str, clock: _Clock, rules: list[str]) -> str:
+    last: FetchFailed | None = None
+    for attempt in range(ATTEMPTS):
+        try:
+            body, _content_type = _read(url, clock, rules, "text/html,text/plain")
+            return body.decode("utf-8", errors="replace")
+        except FetchBlocked:
+            raise
+        except FetchFailed as exc:
+            last = exc
+            if not exc.retryable or attempt + 1 == ATTEMPTS:
+                raise
+    assert last is not None
+    raise last
+
+
+def fetch_bytes(url: str, clock: _Clock, rules: list[str]) -> tuple[bytes, str]:
+    """Fetch an allowed image. The same robots check and delay as a page fetch."""
+    return _read(url, clock, rules, "image/*,*/*")
+
+
+def _read(url: str, clock: _Clock, rules: list[str], accept: str) -> tuple[bytes, str]:
+    if rules:
+        _require_allowed(url, rules)
     clock.wait()
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,text/plain"})
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent(), "Accept": accept})
     try:
         with urllib.request.urlopen(request, timeout=30, context=_ssl_context()) as response:
             final_url = response.geturl()
-            body = response.read().decode("utf-8", errors="replace")
+            content_type = response.headers.get("Content-Type", "")
+            body = response.read()
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"{url} returned HTTP {exc.code}") from exc
+        retryable = exc.code == 429 or exc.code >= 500
+        raise FetchFailed(f"{url} returned HTTP {exc.code}", retryable=retryable) from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach {url}") from exc
+        raise FetchFailed(f"Could not reach {url}", retryable=True) from exc
     if rules:
         _require_allowed(final_url, rules)
-    return body
+    return body, content_type

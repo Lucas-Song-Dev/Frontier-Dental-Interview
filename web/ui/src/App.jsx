@@ -3,6 +3,7 @@ import {
   ask,
   getCatalog,
   getJobs,
+  getPipeline,
   getProduct,
   getQueries,
   getRows,
@@ -15,12 +16,20 @@ import { Icon } from "./icons.jsx";
 const PANEL_KEY = "desk-panels";
 const SIZE_KEY = "desk-sizes";
 const LINKS_KEY = "desk-links";
-const REQUIRED_LINKS = [
+const CHATS_KEY = "desk-chats";
+const CRAWL_ANCHOR_KEY = "desk-crawl-anchor";
+const CHAT_LIMIT = 20;
+const MESSAGE_LIMIT = 40;
+const ROW_LIMIT = 40;
+const CRAWL_LINKS = [
   { href: "https://www.safcodental.com/catalog/sutures-surgical-products", label: "Sutures seed" },
   { href: "https://www.safcodental.com/catalog/gloves", label: "Gloves seed" },
+];
+const POLICY_LINKS = [
   { href: "https://www.safcodental.com/robots.txt", label: "robots.txt" },
   { href: "https://www.safcodental.com/sitemap.xml", label: "Sitemap" },
 ];
+const REQUIRED_LINKS = [...CRAWL_LINKS, ...POLICY_LINKS];
 const FIELDS = [
   ["crawl_interval_minutes", "Time between crawls", "Minutes from the end of one run until the next may start."],
   ["min_delay_seconds", "Minimum delay", "Seconds between requests. Never below a robots Crawl-delay."],
@@ -28,6 +37,33 @@ const FIELDS = [
   ["max_products", "Max products per run", "Stop a run after this many parent products."],
   ["max_pages_per_category", "Max pages per category", "Live ?page= links stay disallowed."],
 ];
+
+function crawlIntervalMs(settings) {
+  const minutes = Number(settings?.settings?.crawl_interval_minutes || 360);
+  return Math.max(minutes, 15) * 60 * 1000;
+}
+
+function crawlDeadline(jobs, settings, anchor) {
+  const interval = crawlIntervalMs(settings);
+  const latest = jobs.find((job) => job.finished_at || job.started_at);
+  const stamp = latest?.finished_at || latest?.started_at || "";
+  const parsed = Date.parse(stamp);
+  if (Number.isFinite(parsed)) return parsed + interval;
+  if (!anchor) return null;
+  return anchor + interval;
+}
+
+function formatCountdown(ms) {
+  if (ms <= 0) return "Due";
+  const total = Math.ceil(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const pad = (value) => String(value).padStart(2, "0");
+  if (hours > 0) return `${hours}h ${pad(minutes)}m ${pad(seconds)}s`;
+  if (minutes > 0) return `${minutes}m ${pad(seconds)}s`;
+  return `${seconds}s`;
+}
 
 function clamp(value, min, max, fallback) {
   const number = Number(value);
@@ -49,25 +85,156 @@ function readSizes() {
   }
 }
 
+function parseRobots(text) {
+  const disallows = [];
+  const sitemaps = [];
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.split("#")[0].trim();
+    const match = line.match(/^(disallow|sitemap)\s*:\s*(.*)$/i);
+    if (!match || !match[2].trim()) continue;
+    if (match[1].toLowerCase() === "sitemap") sitemaps.push(match[2].trim());
+    else disallows.push(match[2].trim());
+  }
+  return { disallows, sitemaps };
+}
+
+function policyLinks(robotsText) {
+  const parsed = parseRobots(robotsText);
+  const sitemaps = parsed.sitemaps.length ? parsed.sitemaps : POLICY_LINKS.map((item) => item.href).filter((href) => href.endsWith("sitemap.xml"));
+  return [{ href: "https://www.safcodental.com/robots.txt" }, ...sitemaps.map((href) => ({ href }))];
+}
+
+function linkKey(href) {
+  try {
+    const url = new URL(href);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    return `${url.origin}${path}${url.search}`;
+  } catch {
+    return href;
+  }
+}
+
 function readExtraLinks() {
   try {
     const saved = JSON.parse(localStorage.getItem(LINKS_KEY) || "[]");
     if (!Array.isArray(saved)) return [];
-    const required = new Set(REQUIRED_LINKS.map((item) => item.href));
-    return saved.filter((item) => item && typeof item.href === "string" && item.href.startsWith("https://") && !required.has(item.href));
+    const required = new Set(REQUIRED_LINKS.map((item) => linkKey(item.href)));
+    return saved.filter((item) => item && typeof item.href === "string" && item.href.startsWith("https://") && !required.has(linkKey(item.href))).map((item, index) => ({
+      id: typeof item.id === "string" && item.id ? item.id : `extra-${index}`,
+      href: item.href,
+    }));
   } catch {
     return [];
   }
 }
 
-function linkLabel(href) {
+function chatId() {
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function titleFrom(who) {
+  const line = String(who || "").replace(/\s+/g, " ").trim();
+  if (!line) return "New chat";
+  return line.length > 48 ? `${line.slice(0, 45).trimEnd()}…` : line;
+}
+
+function blankChat() {
+  return { id: chatId(), title: "New chat", updatedAt: Date.now(), thread: [] };
+}
+
+function normalizeEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const columns = Array.isArray(raw.columns) ? raw.columns.map((column) => String(column)) : [];
+  const rows = Array.isArray(raw.rows)
+    ? raw.rows.slice(0, ROW_LIMIT).map((row) => (Array.isArray(row) ? row.map((cell) => (cell == null ? null : String(cell))) : []))
+    : [];
+  return {
+    who: String(raw.who || ""),
+    answer: String(raw.answer || ""),
+    sql: String(raw.sql || ""),
+    columns,
+    rows,
+    query_id: String(raw.query_id || ""),
+  };
+}
+
+function normalizeChat(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const thread = Array.isArray(raw.thread) ? raw.thread.slice(-MESSAGE_LIMIT).map(normalizeEntry).filter(Boolean) : [];
+  const updatedAt = Number(raw.updatedAt);
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : chatId(),
+    title: typeof raw.title === "string" && raw.title.trim() ? raw.title.trim().slice(0, 80) : "New chat",
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+    thread,
+  };
+}
+
+function sortChats(chats) {
+  return [...chats].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function readChats() {
+  const fresh = () => {
+    const chat = blankChat();
+    return { activeId: chat.id, chats: [chat] };
+  };
   try {
-    const url = new URL(href);
-    const last = url.pathname.split("/").filter(Boolean).pop();
-    return last || url.hostname;
+    const parsed = JSON.parse(localStorage.getItem(CHATS_KEY) || "null");
+    const chats = Array.isArray(parsed?.chats) ? sortChats(parsed.chats.map(normalizeChat).filter(Boolean)).slice(0, CHAT_LIMIT) : [];
+    if (!chats.length) return fresh();
+    const activeId = chats.some((chat) => chat.id === parsed.activeId) ? parsed.activeId : chats[0].id;
+    return { activeId, chats };
   } catch {
-    return href;
+    return fresh();
   }
+}
+
+function persistChats(store) {
+  const compact = {
+    ...store,
+    chats: store.chats.slice(0, 8).map((chat) => ({
+      ...chat,
+      thread: chat.thread.slice(-10).map((entry) => ({ ...entry, rows: [], columns: [] })),
+    })),
+  };
+  for (const attempt of [store, compact]) {
+    try {
+      localStorage.setItem(CHATS_KEY, JSON.stringify(attempt));
+      return;
+    } catch {
+      // The browser refused the larger copy. The shorter one is the fallback.
+    }
+  }
+}
+
+function withExchange(store, entry) {
+  const exchange = normalizeEntry(entry);
+  if (!exchange) return store;
+  const activeId = store.chats.some((chat) => chat.id === store.activeId) ? store.activeId : store.chats[0].id;
+  const chats = store.chats.map((chat) => {
+    if (chat.id !== activeId) return chat;
+    const thread = [...chat.thread, exchange].slice(-MESSAGE_LIMIT);
+    const title = chat.thread.length === 0 ? titleFrom(exchange.who) : chat.title;
+    return { ...chat, title, thread, updatedAt: Date.now() };
+  });
+  return { activeId, chats: sortChats(chats).slice(0, CHAT_LIMIT) };
+}
+
+function withNewChat(store) {
+  const empty = store.chats.find((chat) => chat.thread.length === 0);
+  if (empty) return { ...store, activeId: empty.id };
+  const chat = blankChat();
+  return { activeId: chat.id, chats: sortChats([chat, ...store.chats]).slice(0, CHAT_LIMIT) };
+}
+
+function ageLabel(updatedAt, now) {
+  const minutes = Math.max(0, Math.floor((now - updatedAt) / 60000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 }
 
 function readPanels() {
@@ -97,17 +264,19 @@ function usePath() {
 function activityFor(path) {
   if (path === "/chat") return "ask";
   if (path === "/jobs" || /^\/jobs\/\d+$/.test(path)) return "jobs";
-  if (path === "/settings") return "settings";
+  if (path === "/settings" || path === "/links") return "settings";
   return "catalog";
 }
 
-function titleFor(path, catalog, product) {
-  if (path === "/chat") return "Query agent";
+function titleFor(path, catalog, product, chatTitle) {
+  if (path === "/chat") return chatTitle && chatTitle !== "New chat" ? chatTitle : "Ask";
   const job = path.match(/^\/jobs\/(\d+)$/);
   if (path === "/jobs") return "Jobs";
   if (job) return `Job ${job[1]}`;
   if (path === "/settings") return "Settings";
+  if (path === "/links") return "Links";
   if (path === "/gate") return "Gate";
+  if (path === "/pipeline") return "Pipeline";
   if (path === "/data") return "All rows";
   if (product) return product.name;
   const category = path.match(/^\/category\/([a-z]+)$/);
@@ -127,10 +296,12 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [settings, setSettings] = useState(null);
   const [product, setProduct] = useState(null);
-  const [thread, setThread] = useState([]);
+  const [chats, setChats] = useState(readChats);
   const [output, setOutput] = useState(null);
   const [status, setStatus] = useState("");
   const [auto, setAuto] = useState(() => localStorage.getItem("desk-auto") === "on");
+  const [anchor, setAnchor] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   const [extraLinks, setExtraLinks] = useState(readExtraLinks);
   const [error, setError] = useState("");
 
@@ -165,6 +336,10 @@ export default function App() {
     localStorage.setItem(SIZE_KEY, JSON.stringify(sizes));
   }, [sizes]);
 
+  useEffect(() => {
+    persistChats(chats);
+  }, [chats]);
+
   function applySize(key, delta, isStart, sign) {
     if (isStart) {
       sizeAtDrag.current = sizes;
@@ -192,28 +367,82 @@ export default function App() {
   }
 
   async function refresh() {
-    setStatus("Fetching allowed Safco URLs…");
+    setStatus("Sending the crawl…");
     try {
-      await refreshSnapshot();
-      await loadDesk();
-      setStatus("Fetched safcodental.com");
+      const result = await refreshSnapshot();
+      const next = await getJobs();
+      const rows = next.jobs || [];
+      setJobs(rows);
+      if (!rows.some((job) => job.status === "running")) {
+        await loadDesk();
+        setStatus("Fetched safcodental.com");
+        return;
+      }
+      setStatus(`Job #${result.job_id} is running`);
+      go(`/jobs/${result.job_id}`);
     } catch (exc) {
       setStatus(exc.message);
     }
   }
 
+  const crawlRunning = jobs.some((job) => job.status === "running");
   useEffect(() => {
-    if (!auto) return undefined;
-    const minutes = Number(settings?.settings?.crawl_interval_minutes || 360);
+    if (!crawlRunning) return undefined;
+    let cancelled = false;
     const timer = setInterval(() => {
-      refresh();
-    }, Math.max(minutes, 15) * 60 * 1000);
+      getJobs().then((next) => {
+        if (cancelled) return;
+        const rows = next.jobs || [];
+        if (rows.some((job) => job.status === "running")) {
+          setJobs(rows);
+          return;
+        }
+        loadDesk().catch((exc) => {
+          if (!cancelled) setError(exc.message);
+        });
+      }).catch((exc) => {
+        if (!cancelled) setStatus(exc.message);
+      });
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [crawlRunning, loadDesk]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [auto, loadDesk, settings]);
+  }, []);
+
+  useEffect(() => {
+    if (!settings || jobs.some((job) => job.finished_at || job.started_at)) return;
+    const saved = Number(localStorage.getItem(CRAWL_ANCHOR_KEY));
+    if (Number.isFinite(saved) && saved > 0) {
+      setAnchor(saved);
+      return;
+    }
+    const stamp = Date.now();
+    localStorage.setItem(CRAWL_ANCHOR_KEY, String(stamp));
+    setAnchor(stamp);
+  }, [settings, jobs]);
+
+  const nextCrawl = settings ? crawlDeadline(jobs, settings, anchor) : null;
+  const countdown = nextCrawl === null ? "" : formatCountdown(nextCrawl - now);
+  const refreshRef = useRef(refresh);
+  const crawledFor = useRef(0);
+  refreshRef.current = refresh;
+
+  useEffect(() => {
+    if (!auto || nextCrawl === null || now < nextCrawl || crawledFor.current === nextCrawl) return;
+    crawledFor.current = nextCrawl;
+    refreshRef.current();
+  }, [auto, now, nextCrawl]);
 
   function toggleAuto() {
     const next = !auto;
     setAuto(next);
+    if (!next) crawledFor.current = 0;
     localStorage.setItem("desk-auto", next ? "on" : "off");
   }
 
@@ -230,22 +459,40 @@ export default function App() {
       return;
     }
     const reply = await ask({ query_id: query.id, sku: sku || "" });
-    const entry = { who: query.title, ...reply };
-    setThread((current) => [...current, entry]);
-    setOutput({ title: query.title, ...reply });
-    openPanel("bottom");
+    remember({ who: query.title, ...reply });
     if (path !== "/chat") go("/chat");
   }
 
   async function submitQuestion(question) {
     const reply = await ask({ question });
-    setThread((current) => [...current, { who: question, ...reply }]);
-    setOutput({ title: question, ...reply });
+    remember({ who: question, ...reply });
+  }
+
+  function remember(entry) {
+    setChats((current) => withExchange(current, entry));
+    setOutput({ title: entry.who, ...entry });
     openPanel("bottom");
   }
 
+  function selectChat(id) {
+    setChats((current) => ({ ...current, activeId: id }));
+    const chat = chats.chats.find((item) => item.id === id);
+    const last = chat?.thread.at(-1);
+    setOutput(last ? { title: last.who, ...last } : null);
+    if (path !== "/chat") go("/chat");
+  }
+
+  function startChat() {
+    setChats(withNewChat);
+    setOutput(null);
+    if (path !== "/chat") go("/chat");
+    openPanel("primary");
+  }
+
+  const activeChat = chats.chats.find((chat) => chat.id === chats.activeId) || chats.chats[0];
+  const thread = activeChat?.thread || [];
   const activity = activityFor(path);
-  const tab = titleFor(path, catalog, product);
+  const tab = titleFor(path, catalog, product, activeChat?.title);
 
   const tree = useMemo(() => {
     if (!catalog) return [];
@@ -257,21 +504,11 @@ export default function App() {
           label: "Catalog",
           items: catalog.categories.map((category) => ({ href: `/category/${category.key}`, label: category.title })),
         },
-        { key: "data", label: "Data", items: [{ href: "/data", label: "All rows" }] },
+        { key: "data", label: "Data", items: [{ href: "/data", label: "All rows" }, { href: "/pipeline", label: "Pipeline" }] },
         { key: "gate", label: "Gate", items: [{ href: "/gate", label: "Robots" }] },
-        {
-          key: "links",
-          label: "Links",
-          items: [
-            ...REQUIRED_LINKS.map((item) => ({ ...item, external: true })),
-            ...extraLinks.map((item) => ({ ...item, external: true, removable: true })),
-          ],
-        },
       ];
     }
-    if (activity === "ask") {
-      return [{ key: "agent", label: "", items: [{ href: "/chat", label: "Query agent" }] }];
-    }
+    if (activity === "ask") return [];
     if (activity === "jobs") {
       return [
         { key: "runs", label: "Runs", items: [{ href: "/jobs", label: "All runs" }] },
@@ -282,33 +519,43 @@ export default function App() {
         },
       ];
     }
-    return [{ key: "desk", label: "", items: [{ href: "/settings", label: "Desk settings" }] }];
-  }, [activity, catalog, extraLinks, jobs]);
+    return [
+      { key: "desk", label: "Desk", items: [{ href: "/settings", label: "Desk settings" }] },
+      { key: "links", label: "Links", items: [{ href: "/links", label: "All links" }] },
+    ];
+  }, [activity, catalog, jobs]);
 
-  function addLink(raw) {
-    let href = raw.trim();
-    if (!href) return false;
-    if (!/^https?:\/\//i.test(href)) href = `https://${href}`;
-    let url;
-    try {
-      url = new URL(href);
-    } catch {
-      return false;
-    }
-    if (url.protocol !== "https:") return false;
-    href = url.toString();
-    const known = new Set([...REQUIRED_LINKS, ...extraLinks].map((item) => item.href));
-    if (known.has(href)) return false;
-    const next = [...extraLinks, { href, label: linkLabel(href) }];
+  function writeLinks(next) {
     setExtraLinks(next);
     localStorage.setItem(LINKS_KEY, JSON.stringify(next));
+  }
+
+  function knownLinkKeys() {
+    const policy = policyLinks(catalog?.gate?.robots || "");
+    return new Set([...CRAWL_LINKS, ...policy, ...extraLinks].map((item) => linkKey(item.href)));
+  }
+
+  function addLink(raw) {
+    const href = normalizeHref(raw);
+    if (!href) return "Enter an https URL.";
+    if (knownLinkKeys().has(linkKey(href))) return "Already added.";
+    writeLinks([...extraLinks, { id: `extra-${Date.now()}`, href }]);
+    return "";
+  }
+
+  function updateLink(id, raw) {
+    const href = normalizeHref(raw);
+    if (!href) return false;
+    const current = extraLinks.find((item) => item.id === id);
+    if (!current) return false;
+    const taken = [...CRAWL_LINKS, ...policyLinks(catalog?.gate?.robots || ""), ...extraLinks].some((item) => linkKey(item.href) === linkKey(href) && item.id !== id);
+    if (taken) return false;
+    writeLinks(extraLinks.map((item) => (item.id === id ? { ...item, href } : item)));
     return true;
   }
 
-  function removeLink(href) {
-    const next = extraLinks.filter((item) => item.href !== href);
-    setExtraLinks(next);
-    localStorage.setItem(LINKS_KEY, JSON.stringify(next));
+  function removeLink(id) {
+    writeLinks(extraLinks.filter((item) => item.id !== id));
   }
 
   function onActivity(id, href) {
@@ -329,6 +576,11 @@ export default function App() {
         <strong className="mark">Catalog desk</strong>
         <span className="title-path">{tab}</span>
         <div className="layout-controls">
+          {countdown ? (
+            <span className="crawl-countdown" title={nextCrawl ? `Next crawl ${new Date(nextCrawl).toLocaleString()}` : undefined} aria-label={`Next crawl ${countdown}`}>
+              {countdown}
+            </span>
+          ) : null}
           <IconButton className="text-btn" label="Fetch allowed Safco URLs" tip="below" onClick={refresh}>Refresh</IconButton>
           <IconButton className="icon-btn" label="Primary side bar" tip="below" pressed={panels.primary} onClick={() => togglePanel("primary")}>
             <Icon name="left" />
@@ -346,7 +598,7 @@ export default function App() {
           <IconButton label="Catalog" current={activity === "catalog"} onClick={() => onActivity("catalog", "/")}>
             <Icon name="files" />
           </IconButton>
-          <IconButton label="Query agent" current={activity === "ask"} onClick={() => onActivity("ask", "/chat")}>
+          <IconButton label="Ask" current={activity === "ask"} onClick={() => onActivity("ask", "/chat")}>
             <Icon name="comment" />
           </IconButton>
           <IconButton label="Jobs" current={activity === "jobs"} onClick={() => onActivity("jobs", "/jobs")}>
@@ -358,28 +610,22 @@ export default function App() {
         </nav>
         {panels.primary ? (
           <aside className="sidebar" style={{ width: sizes.sidebar }}>
-            <div className="tree">
-              {tree.map((group) => (
-                <div className="tree-section" key={group.key}>
-                  {group.label ? <div className="tree-label">{group.label}</div> : null}
-                  {group.items.map((item) => (
-                    item.external ? (
-                      <span className="link-row" key={item.href}>
-                        <a href={item.href} title={item.href} target="_blank" rel="noreferrer">{item.label}</a>
-                        {item.removable ? (
-                          <button type="button" aria-label={`Remove ${item.label}`} onClick={() => removeLink(item.href)}>×</button>
-                        ) : null}
-                      </span>
-                    ) : (
+            {activity === "ask" ? (
+              <ChatList chats={chats.chats} activeId={activeChat?.id || ""} now={now} onOpen={selectChat} onNew={startChat} />
+            ) : (
+              <div className="tree">
+                {tree.map((group) => (
+                  <div className="tree-section" key={group.key}>
+                    {group.label ? <div className="tree-label">{group.label}</div> : null}
+                    {group.items.map((item) => (
                       <a key={item.href} href={item.href} className={path === item.href ? "is-current" : ""} onClick={(event) => { event.preventDefault(); go(item.href); }}>
                         {item.label}
                       </a>
-                    )
-                  ))}
-                  {group.key === "links" ? <LinkAdd onAdd={addLink} /> : null}
-                </div>
-              ))}
-            </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </aside>
         ) : null}
         {panels.primary ? (
@@ -396,8 +642,13 @@ export default function App() {
                 jobs={jobs}
                 settings={settings}
                 thread={thread}
+                chatId={activeChat?.id || ""}
                 go={go}
                 onAsk={submitQuestion}
+                links={extraLinks}
+                onAddLink={addLink}
+                onUpdateLink={updateLink}
+                onRemoveLink={removeLink}
                 onSaved={async () => { await loadDesk(); setStatus("Settings saved"); }}
               />
             )}
@@ -436,17 +687,17 @@ export default function App() {
   );
 }
 
-function LinkAdd({ onAdd }) {
-  const [value, setValue] = useState("");
-  return (
-    <form className="link-add" onSubmit={(event) => {
-      event.preventDefault();
-      if (onAdd(value)) setValue("");
-    }}>
-      <label className="sr" htmlFor="new-link">Add a link</label>
-      <input id="new-link" value={value} placeholder="Add a link" onChange={(event) => setValue(event.target.value)} />
-    </form>
-  );
+function normalizeHref(raw) {
+  let href = raw.trim();
+  if (!href) return "";
+  if (!/^https?:\/\//i.test(href)) href = `https://${href}`;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "https:") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function IconButton({ label, tip = "right", pressed, current, className = "", children, ...props }) {
@@ -500,15 +751,27 @@ function Sash({ orientation, label, onResize }) {
   );
 }
 
-function Editor({ path, catalog, product, jobs, settings, thread, go, onAsk, onSaved }) {
-  if (path === "/chat") return <AskView thread={thread} catalog={catalog} onAsk={onAsk} />;
+function Editor({ path, catalog, product, jobs, settings, thread, chatId, links, go, onAsk, onSaved, onAddLink, onUpdateLink, onRemoveLink }) {
+  if (path === "/chat") return <AskView key={chatId} thread={thread} catalog={catalog} onAsk={onAsk} />;
   const jobMatch = path.match(/^\/jobs\/(\d+)$/);
   if (path === "/jobs" || jobMatch) {
     return <JobsView jobs={jobs} jobId={jobMatch ? Number(jobMatch[1]) : null} go={go} />;
   }
   if (path.startsWith("/jobs/")) return <p className="page-note">That run is not in the snapshot.</p>;
   if (path === "/settings") return <SettingsView pack={settings} onSaved={onSaved} />;
+  if (path === "/links") {
+    return (
+      <LinksView
+        catalog={catalog}
+        links={links}
+        onAdd={onAddLink}
+        onUpdate={onUpdateLink}
+        onRemove={onRemoveLink}
+      />
+    );
+  }
   if (path === "/gate") return <GateView catalog={catalog} />;
+  if (path === "/pipeline") return <PipelineView />;
   if (path === "/data") return <DataView go={go} stamp={`${catalog.snapshot}:${catalog.products.length}`} />;
   const categoryKey = path.match(/^\/category\/([a-z]+)$/)?.[1];
   if (categoryKey) {
@@ -529,8 +792,8 @@ function Overview({ catalog, go }) {
   return (
     <div className="page readme">
       <h2>Catalog desk</h2>
-      <p>Local desk for the Safco snapshot. It stores the two seed categories, the product sheets fetched from allowed URLs, and the robots gate. Listing <span className="mono">?page=</span> is not requested.</p>
-      <p>This snapshot has {products} products and {variants} child SKUs. Open Data for the full table.</p>
+      <p>Local desk for the Safco snapshot. It stores the two seed categories, the product sheets fetched from allowed URLs, and the robots gate. Listing <span className="mono">?page=</span> is not requested. Child SKUs come from <span className="mono">window.masterData</span> on each product page.</p>
+      <p>This snapshot has {products} products and {variants} child SKUs. Open Data for the table, or Pipeline for the extraction run.</p>
       <h2>Tutorial</h2>
       <ol>
         <li>
@@ -551,13 +814,15 @@ function Overview({ catalog, go }) {
 const DATA_COLUMNS = [
   ["sku", "SKU"],
   ["variant_name", "Name"],
+  ["brand", "Brand"],
+  ["pack_size", "Pack"],
   ["item_group", "Group"],
   ["mfr_number", "Mfr #"],
   ["stock", "Stock"],
   ["variant_price", "Price"],
   ["product_name", "Product"],
   ["parent_sku", "Parent SKU"],
-  ["category_title", "Category"],
+  ["category_path", "Category path"],
   ["availability", "Availability"],
 ];
 
@@ -638,6 +903,11 @@ function DataView({ go, stamp }) {
           </select>
         </label>
         <span className="meta">{sorted.length} of {rows.length} rows</span>
+        <span className="export-links">
+          <a href="/api/export.csv">CSV</a>
+          <a href="/api/export.json">JSON</a>
+          <a href="/api/export.xlsx">Excel</a>
+        </span>
       </form>
       <div className="table-wrap">
         <table>
@@ -681,18 +951,24 @@ function CategoryView({ category, catalog, go }) {
               <th>Product</th>
               <th>Manufacturer</th>
               <th>Price</th>
+              <th>Image</th>
               <th>Sheet</th>
             </tr>
           </thead>
           <tbody>
-            {category.cards.map((card) => (
-              <tr key={card.slug}>
-                <td>{card.saved ? <a href={`/product/${card.slug}`} onClick={(event) => { event.preventDefault(); go(`/product/${card.slug}`); }}>{card.name}</a> : card.name}</td>
-                <td>{card.manufacturer}</td>
-                <td>{card.price}</td>
-                <td>{card.saved ? "Saved" : ""}</td>
-              </tr>
-            ))}
+            {category.cards.map((card) => {
+              const sheet = catalog.products.find((item) => item.slug === card.slug);
+              const image = sheet?.image || "";
+              return (
+                <tr key={card.slug}>
+                  <td>{card.saved ? <a href={`/product/${card.slug}`} onClick={(event) => { event.preventDefault(); go(`/product/${card.slug}`); }}>{card.name}</a> : card.name}</td>
+                  <td>{card.manufacturer}</td>
+                  <td>{card.price}</td>
+                  <td>{image ? <img className="thumb" src={image} alt="" /> : ""}</td>
+                  <td>{card.saved ? "Saved" : ""}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -712,6 +988,8 @@ function CategoryView({ category, catalog, go }) {
 
 function ProductView({ product, go }) {
   const grouped = product.variants.some((row) => row.group);
+  const images = product.images || [];
+  const alternatives = product.alternatives || [];
   return (
     <div className="page">
       <p className="crumbs">
@@ -720,12 +998,17 @@ function ProductView({ product, go }) {
         <a href={`/category/${product.category}`} onClick={(event) => { event.preventDefault(); go(`/category/${product.category}`); }}>{product.category_title}</a>
         <span> / {product.name}</span>
       </p>
-      <dl className="kv inline">
-        <div><dt>Parent SKU</dt><dd>{product.sku}</dd></div>
+      {images[0] ? <img className="product-photo" src={images[0]} alt="" /> : null}
+      <dl className="kv">
+        <div><dt>Brand</dt><dd>{product.brand || ""}</dd></div>
+        <div><dt>Parent SKU</dt><dd className="mono">{product.sku}</dd></div>
+        <div><dt>Category</dt><dd>{product.category_path || product.category_title}</dd></div>
+        <div><dt>URL</dt><dd>{product.url ? <a href={product.url}>{product.url}</a> : ""}</dd></div>
         <div><dt>Price</dt><dd>{product.price}</dd></div>
         <div><dt>Availability</dt><dd>{product.availability}</dd></div>
         <div><dt>Child SKUs</dt><dd>{product.variants.length}</dd></div>
       </dl>
+      {product.description ? <p className="prose">{product.description}</p> : null}
       <div className="table-wrap">
         <table>
           <thead>
@@ -734,6 +1017,7 @@ function ProductView({ product, go }) {
               <th>Name</th>
               {grouped ? <th>Group</th> : null}
               <th>Mfr #</th>
+              <th>Pack</th>
               <th>Stock</th>
               <th>Price</th>
             </tr>
@@ -745,6 +1029,7 @@ function ProductView({ product, go }) {
                 <td>{row.name}</td>
                 {grouped ? <td>{row.group}</td> : null}
                 <td className="mono">{row.mfr}</td>
+                <td>{row.pack_size}</td>
                 <td>{row.stock}</td>
                 <td>{row.price}</td>
               </tr>
@@ -752,6 +1037,78 @@ function ProductView({ product, go }) {
           </tbody>
         </table>
       </div>
+      {alternatives.length ? (
+        <>
+          <h2>Alternatives</h2>
+          <ul className="plain">
+            {alternatives.map((item) => (
+              <li key={item.url}><a href={item.url}>{item.name}</a></li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function PipelineView() {
+  const [pack, setPack] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let cancel = false;
+    getPipeline()
+      .then((payload) => { if (!cancel) setPack(payload); })
+      .catch((exc) => { if (!cancel) setError(exc.message); });
+    return () => { cancel = true; };
+  }, []);
+  if (error) return <p className="page-note">{error}</p>;
+  if (!pack) return <p className="page-note">Loading pipeline…</p>;
+  return (
+    <div className="page">
+      <p className="lead">The run that filled this snapshot. Listing pagination stays disallowed. Extraction uses the page HTML, not a model.</p>
+      <div className="export-links">
+        {pack.exports.map((href) => <a key={href} href={href}>{href.split(".").pop().toUpperCase()}</a>)}
+      </div>
+      <h2>Stages</h2>
+      <dl className="kv">
+        {pack.stages.map((stage) => (
+          <div key={stage.id}><dt>{stage.id}</dt><dd>{stage.role}</dd></div>
+        ))}
+      </dl>
+      <h2>Latest run</h2>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>Outcome</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pack.steps.map((step, index) => (
+              <tr key={`${step.stage}-${index}`}>
+                <td>{step.stage}</td>
+                <td>{step.outcome}</td>
+                <td className="wrap">{step.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <h2>Production</h2>
+      <dl className="kv">
+        {pack.production.map((item) => (
+          <div key={item.title}><dt>{item.title}</dt><dd>{item.body}</dd></div>
+        ))}
+      </dl>
+      <h2>Schema</h2>
+      <p className="lead">One row per child SKU. The same columns are in the database view and the three export files.</p>
+      <dl className="kv">
+        {pack.schema.map((column) => (
+          <div key={column.name}><dt className="mono">{column.name}</dt><dd>{column.description}</dd></div>
+        ))}
+      </dl>
     </div>
   );
 }
@@ -771,11 +1128,39 @@ function GateView({ catalog }) {
   );
 }
 
+function ChatList({ chats, activeId, now, onOpen, onNew }) {
+  return (
+    <div className="tree chat-list">
+      <div className="chat-head">
+        <span className="tree-label">Ask</span>
+        <button type="button" className="chat-new" aria-label="New chat" onClick={onNew}>+</button>
+      </div>
+      {chats.map((chat) => (
+        <button
+          key={chat.id}
+          type="button"
+          className={chat.id === activeId ? "chat-row is-current" : "chat-row"}
+          aria-current={chat.id === activeId ? "true" : undefined}
+          onClick={() => onOpen(chat.id)}
+        >
+          <span className="chat-title">{chat.title}</span>
+          <span className="chat-age">{ageLabel(chat.updatedAt, now)}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function AskView({ thread, catalog, onAsk }) {
   const [question, setQuestion] = useState("");
+  const scroller = useRef(null);
+  useEffect(() => {
+    const node = scroller.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [thread.length]);
   return (
     <div className="ask">
-      <div className="thread">
+      <div className="thread" ref={scroller}>
         <p className="lead">
           {catalog.level} can run the queries in the right bar. {catalog.claude ? "Claude may choose among those." : "Add CLAUDE_API_KEY to .env to let Claude choose one."}
         </p>
@@ -784,25 +1169,57 @@ function AskView({ thread, catalog, onAsk }) {
             <p className="who">You</p>
             <p>{entry.who}</p>
             <p className="who">Desk</p>
-            <p>{entry.answer}</p>
+            <p className="desk">{entry.answer}</p>
             <ResultTable columns={entry.columns} rows={entry.rows} />
           </article>
         ))}
       </div>
       <form className="composer" onSubmit={(event) => { event.preventDefault(); const value = question.trim(); if (!value) return; setQuestion(""); onAsk(value); }}>
         <label className="sr" htmlFor="question">Question</label>
-        <textarea id="question" rows={2} value={question} placeholder="Ask about the snapshot" onChange={(event) => setQuestion(event.target.value)} />
+        <textarea
+          id="question"
+          rows={2}
+          value={question}
+          placeholder="Ask about the snapshot"
+          onChange={(event) => setQuestion(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            if (event.shiftKey) {
+              const field = event.currentTarget;
+              const start = field.selectionStart ?? field.value.length;
+              const end = field.selectionEnd ?? start;
+              const next = `${field.value.slice(0, start)}\n${field.value.slice(end)}`;
+              setQuestion(next);
+              const cursor = start + 1;
+              requestAnimationFrame(() => {
+                field.selectionStart = cursor;
+                field.selectionEnd = cursor;
+              });
+              return;
+            }
+            event.currentTarget.form?.requestSubmit();
+          }}
+        />
         <button type="submit">Ask</button>
       </form>
     </div>
   );
 }
 
+function jobProgress(job) {
+  if (job.status !== "running" || !job.message) return "";
+  const line = String(job.message).split(". ")[0];
+  return line.length > 96 ? `${line.slice(0, 93)}…` : line;
+}
+
 function JobsView({ jobs, jobId, go }) {
   if (!jobs.length) return <p className="page-note">No jobs yet. Refresh the snapshot to record one.</p>;
   const missing = jobId !== null && !jobs.some((job) => job.id === jobId);
+  const running = jobs.some((job) => job.status === "running");
   return (
     <div className="table-wrap">
+      {running ? <p className="page-note">This list updates while the crawl is running.</p> : null}
       {missing ? <p className="page-note">That run is not in the snapshot.</p> : null}
       <table>
         <thead>
@@ -833,7 +1250,10 @@ function JobsView({ jobs, jobId, go }) {
                 }}
               >
                 <td>{(job.finished_at || job.started_at || "").replace("T", " ").replace("+00:00", " UTC")}</td>
-                <td>{job.status}</td>
+                <td>
+                  {job.status}
+                  {jobProgress(job) ? <div className="job-progress">{jobProgress(job)}</div> : null}
+                </td>
                 <td>{job.products}</td>
                 <td>{job.variants}</td>
                 <td>{job.cards}</td>
@@ -866,6 +1286,113 @@ function JobMore({ job }) {
           ))}
         </ul>
       ) : null}
+    </div>
+  );
+}
+
+function LinksView({ catalog, links, onAdd, onUpdate, onRemove }) {
+  const parsed = parseRobots(catalog?.gate?.robots || "");
+  const policy = policyLinks(catalog?.gate?.robots || "");
+  const products = catalog?.gate?.sitemap_products;
+  const categories = catalog?.gate?.sitemap_categories;
+  const parsedLine = parsed.disallows.length
+    ? `${parsed.disallows.length} disallow rules. Sitemap lists ${Number(products || 0).toLocaleString()} product URLs and ${categories || 0} category URLs.`
+    : "";
+  return (
+    <div className="data-view links-view">
+      <LinkCreate onAdd={onAdd} />
+      <section className="link-section">
+        <h2>Crawl during jobs</h2>
+        <p className="lead">Refresh fetches these seed URLs, then each allowed /product/ URL on page 1. Listing ?page= and ?p= URLs stay unfetched.</p>
+        <LinkTable>
+          {CRAWL_LINKS.map((item) => (
+            <FixedLinkRow key={item.href} item={item} />
+          ))}
+          {links.map((item) => (
+            <LinkRow key={item.id} item={item} onUpdate={onUpdate} onRemove={onRemove} />
+          ))}
+        </LinkTable>
+      </section>
+      <section className="link-section">
+        <h2>Robots and sitemaps</h2>
+        {parsedLine ? <p className="lead">{parsedLine}</p> : null}
+        <LinkTable>
+          {policy.map((item) => (
+            <FixedLinkRow key={item.href} item={item} />
+          ))}
+        </LinkTable>
+      </section>
+    </div>
+  );
+}
+
+function LinkTable({ children }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>URL</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function FixedLinkRow({ item }) {
+  return (
+    <tr>
+      <td className="mono">{item.href}</td>
+      <td>
+        <a href={item.href} target="_blank" rel="noreferrer">View</a>
+      </td>
+    </tr>
+  );
+}
+
+function LinkRow({ item, onUpdate, onRemove }) {
+  const [href, setHref] = useState(item.href);
+  useEffect(() => {
+    setHref(item.href);
+  }, [item.href]);
+  function commit() {
+    if (!onUpdate(item.id, href)) setHref(item.href);
+  }
+  return (
+    <tr>
+      <td>
+        <input aria-label="URL" value={href} onChange={(event) => setHref(event.target.value)} onBlur={commit} />
+      </td>
+      <td className="link-actions">
+        <a href={item.href} target="_blank" rel="noreferrer">View</a>
+        <button type="button" onClick={() => onRemove(item.id)}>Remove</button>
+      </td>
+    </tr>
+  );
+}
+
+function LinkCreate({ onAdd }) {
+  const [href, setHref] = useState("");
+  const [note, setNote] = useState("");
+  return (
+    <div className="links-add">
+      <form onSubmit={(event) => {
+        event.preventDefault();
+        const message = onAdd(href);
+        setNote(message);
+        if (!message) setHref("");
+      }}>
+        <label>
+          <span className="sr">URL</span>
+          <input value={href} placeholder="https://" required onChange={(event) => setHref(event.target.value)} />
+        </label>
+        <button type="submit">Add link</button>
+      </form>
+      <p className="link-note">robots.txt and the sitemap are fetched and parsed automatically.</p>
+      {note ? <p className="link-note">{note}</p> : null}
     </div>
   );
 }
