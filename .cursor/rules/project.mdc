@@ -1,0 +1,13 @@
+---
+description: Safco crawler constraints for Python layout, config, robots compliance, and agents
+alwaysApply: true
+---
+
+# Safco catalog agent
+
+Python 3.12, src layout (`src/safco/`), pydantic v2, type hints everywhere, mypy --strict clean, ruff clean.
+No network calls in unit tests; use recorded HTML fixtures in `tests/fixtures/`.
+Never log secrets. Config comes from `config.yaml` + env (pydantic-settings); no hard-coded selectors in code.
+All crawling goes through `RobotsPolicy` + `RateLimiter`: there must be NO code path that fetches a URL without both. No flag may disable robots.txt compliance.
+Agents are small classes behind Protocols, pure where possible (HTML in, data out). I/O lives in adapters.
+Prefer small functions, explicit errors (custom exception types), structured JSON logging with `run_id`/`url`.
