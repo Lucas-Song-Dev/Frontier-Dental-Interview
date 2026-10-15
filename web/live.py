@@ -165,9 +165,20 @@ class _Clock:
         self._last = time.monotonic()
 
 
+def _ca_bundle() -> Path | None:
+    """System trust store: macOS cert.pem, then the Debian/Ubuntu bundle."""
+    for candidate in (
+        Path("/etc/ssl/cert.pem"),
+        Path("/etc/ssl/certs/ca-certificates.crt"),
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _ssl_context() -> ssl.SSLContext:
-    bundle = Path("/etc/ssl/cert.pem")
-    if bundle.is_file():
+    bundle = _ca_bundle()
+    if bundle is not None:
         return ssl.create_default_context(cafile=str(bundle))
     return ssl.create_default_context()
 

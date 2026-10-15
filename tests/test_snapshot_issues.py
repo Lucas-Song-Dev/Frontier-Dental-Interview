@@ -91,8 +91,7 @@ class MasterDataTests(unittest.TestCase):
 
 class FetchTests(unittest.TestCase):
     def test_robots_fetch_uses_the_system_trust_store(self) -> None:
-        bundle = Path("/etc/ssl/cert.pem")
-        self.assertTrue(bundle.is_file())
+        bundle = live._ca_bundle()
         captured: dict[str, object] = {}
 
         class _Response:
@@ -122,7 +121,10 @@ class FetchTests(unittest.TestCase):
         assert isinstance(context, ssl.SSLContext)
         self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
         self.assertTrue(context.check_hostname)
-        expected = ssl.create_default_context(cafile=str(bundle))
+        if bundle is None:
+            expected = ssl.create_default_context()
+        else:
+            expected = ssl.create_default_context(cafile=str(bundle))
         self.assertEqual(context.cert_store_stats(), expected.cert_store_stats())
 
     def test_unreachable_robots_reports_the_url(self) -> None:
