@@ -1,16 +1,21 @@
-{"stage": "navigator", "subject": "https://www.safcodental.com/catalog/sutures-surgical-products", "outcome": "allowed", "detail": "1 product URLs and 8 category URLs on this page have no disallowed query."}
+{"stage": "navigator", "subject": "https://www.safcodental.com/catalog/sutures-surgical-products", "outcome": "allowed", "detail": "13 product URLs and 8 category URLs on this page have no disallowed query."}
 {"stage": "classifier", "subject": "https://www.safcodental.com/catalog/sutures-surgical-products", "outcome": "listing", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/catalog/sutures-surgical-products", "outcome": "extracted", "detail": "Sutures & surgical products: 0 cards on this listing page."}
-{"stage": "navigator", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "allowed", "detail": "1 product URLs and 6 category URLs on this page have no disallowed query."}
+{"stage": "extractor", "subject": "https://www.safcodental.com/catalog/sutures-surgical-products", "outcome": "extracted", "detail": "Sutures & surgical products: 12 cards on this listing page."}
+{"stage": "navigator", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "allowed", "detail": "13 product URLs and 6 category URLs on this page have no disallowed query."}
 {"stage": "classifier", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "listing", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "extracted", "detail": "Dental Exam Gloves: 0 cards on this listing page."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/lucitone-199-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/lucitone-199-reg", "outcome": "out_of_scope", "detail": "Lucitone 199 is out of scope."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/lucitone-reg-liquid", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/lucitone-reg-liquid", "outcome": "out_of_scope", "detail": "Lucitone Liquid is out of scope."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/ultra-trade-silver-alloy", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/ultra-trade-silver-alloy", "outcome": "out_of_scope", "detail": "Ultra silver alloy is out of scope."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/valiant-reg-ph-d-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/valiant-reg-ph-d-reg", "outcome": "out_of_scope", "detail": "Valiant Ph.D. is out of scope."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/valiant-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/valiant-reg", "outcome": "out_of_scope", "detail": "Valiant is out of scope."}
+{"stage": "extractor", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "extracted", "detail": "Dental Exam Gloves: 12 cards on this listing page."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/guidor-reg-e-em-asy-graft-reg-em-classic", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "extractor", "subject": "https://www.safcodental.com/product/guidor-reg-e-em-asy-graft-reg-em-classic", "outcome": "extracted", "detail": "Guidor Easy-Graft Classic: 3 child SKUs, brand Collagen Matrix Inc."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/guidor-reg-e-em-asy-graft-reg-em-classic", "outcome": "accepted", "detail": "Guidor Easy-Graft Classic stored with 3 child SKUs."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/coldstar-disposable-instant-non-insulated-cold-pack", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "extractor", "subject": "https://www.safcodental.com/product/coldstar-disposable-instant-non-insulated-cold-pack", "outcome": "extracted", "detail": "Coldstar Disposable Instant Non-Insulated Cold Pack: 4 child SKUs, brand Coldstar."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/coldstar-disposable-instant-non-insulated-cold-pack", "outcome": "accepted", "detail": "Coldstar Disposable Instant Non-Insulated Cold Pack stored with 4 child SKUs."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/instant-cold-pack", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "extractor", "subject": "https://www.safcodental.com/product/instant-cold-pack", "outcome": "extracted", "detail": "Instant Cold Pack: 2 child SKUs, brand Halyard."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/instant-cold-pack", "outcome": "accepted", "detail": "Instant Cold Pack stored with 2 child SKUs."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/sodium-chloride-0-9-for-injection-b-braun", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "extractor", "subject": "https://www.safcodental.com/product/sodium-chloride-0-9-for-injection-b-braun", "outcome": "extracted", "detail": "Sodium chloride 0.9% for injection - B Braun: 3 child SKUs, brand B Braun."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/sodium-chloride-0-9-for-injection-b-braun", "outcome": "accepted", "detail": "Sodium chloride 0.9% for injection - B Braun stored with 3 child SKUs."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/sterile-water-for-injection-b-braun", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "extractor", "subject": "https://www.safcodental.com/product/sterile-water-for-injection-b-braun", "outcome": "extracted", "detail": "Sterile water for injection - B Braun: 4 child SKUs, brand B Braun."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/sterile-water-for-injection-b-braun", "outcome": "accepted", "detail": "Sterile water for injection - B Braun stored with 4 child SKUs."}

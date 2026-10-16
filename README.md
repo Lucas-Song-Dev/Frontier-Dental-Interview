@@ -6,6 +6,7 @@ A local prototype that extracts Safco Dental products from two categories, store
 - [Why you chose your approach](#why-you-chose-your-approach)
 - [Robots and pagination](#robots-and-pagination)
 - [Agent responsibilities](#agent-responsibilities)
+- [Ask](#ask)
 - [Setup and execution](#setup-and-execution)
 - [Sample output schema](#sample-output-schema)
 - [Limitations](#limitations)
@@ -43,7 +44,7 @@ Fetch I/O is separate from the pipeline. Every live request goes through the rob
 
 The product pages are regular. Parent name, brand, SKU, price, availability, description, and images are in JSON-LD. Every child SKU is already in `window.masterData`, including rows the on-page pager does not draw. A model is not required to read that.
 
-The crawl calls a model in one place. When the body class and the breadcrumb each name a seed and they name different seeds, the validator asks Claude to choose `sutures`, `gloves`, or `out_of_scope`. A breadcrumb outside both seeds is rejected by the rule, including when the body class matches. No API key, or a reply that is not one of those three values, leaves the page unresolved. Page HTML is not sent. Ask can still send the question text to Claude to pick a listed SQL id. That call does not see page HTML either.
+The crawl calls a model in one place. When the body class and the breadcrumb each name a seed and they name different seeds, the validator asks Claude to choose `sutures`, `gloves`, or `out_of_scope`. A breadcrumb outside both seeds is rejected by the rule, including when the body class matches. No API key, or a reply that is not one of those three values, leaves the page unresolved. Page HTML is not sent. Ask can still send the question text to Claude to pick a listed SQL id. That call does not see page HTML, and the id list is already limited to the current user level. See [Ask](#ask).
 
 ## Product extraction
 
@@ -107,6 +108,26 @@ Algolia is what fills the grid in the browser. Calling it, or requesting `?page=
 | Retry | Skips a page with neither marker and continues the run. Keeps a parent row when JSON-LD is present, `masterData` is not, and the page is in scope. A scope model that does not choose leaves the page unresolved. |
 
 The latest trace is on the Pipeline page (`/pipeline`) and in `data/sample/pipeline-log.jsonl`.
+
+## Ask
+
+Ask cannot write SQL. The queries live in `web/queries.py`, and each one is read-only. Settings stores a user level, and that level is what the agent is allowed to run:
+
+- Viewer runs the catalog queries.
+- Operator also runs the robots gate.
+- Admin also reads jobs and crawl settings.
+
+Claude only receives the titles allowed for the current level. The server checks the level again before anything runs, so a guessed id is refused. Pasted SQL and any write statement are refused. A question that matches nothing runs no query. The reply names the titles that level can use.
+
+Viewer, asking for a count that is not on the list:
+
+```
+You
+how many skus have we scanned?
+
+Desk
+I can't count scanned SKUs directly. Available queries include: Child SKUs in stock, Special-order variants, Cheapest Perma Sharp sutures, Cheapest child SKUs, Lavender Nitrile sizes in stock, Suture child SKUs, Glove child SKUs, Brand, pack size, and category, Saved listing cards, and Lookup one SKU (needs a SKU code).
+```
 
 ## Setup and execution
 

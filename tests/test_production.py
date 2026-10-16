@@ -192,6 +192,58 @@ class SettingsTests(unittest.TestCase):
             db.save_settings(incoming)
 
 
+class ClearTests(unittest.TestCase):
+    def test_clear_scraped_keeps_settings_jobs_and_category_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(db, "DB_PATH", Path(directory) / "catalog.db"):
+                db.ensure_database()
+                db.reload_catalog(server.CATALOG)
+                db.start_job("live_fetch")
+                before = db.get_settings()
+                connection = db.connect()
+                try:
+                    titles = {
+                        row["key"]: row["title"]
+                        for row in connection.execute("SELECT key, title FROM categories")
+                    }
+                finally:
+                    connection.close()
+                db.clear_scraped()
+                connection = db.connect()
+                try:
+                    products = connection.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+                    cards = connection.execute("SELECT COUNT(*) FROM listing_cards").fetchone()[0]
+                    steps = connection.execute("SELECT COUNT(*) FROM agent_steps").fetchone()[0]
+                    checkpoints = connection.execute("SELECT COUNT(*) FROM checkpoints").fetchone()[0]
+                    jobs = connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+                    kept = {
+                        row["key"]: row["title"]
+                        for row in connection.execute("SELECT key, title, stats FROM categories")
+                    }
+                    stats = [
+                        row["stats"]
+                        for row in connection.execute("SELECT stats FROM categories")
+                    ]
+                finally:
+                    connection.close()
+                self.assertEqual(products, 0)
+                self.assertEqual(cards, 0)
+                self.assertEqual(steps, 0)
+                self.assertEqual(checkpoints, 0)
+                self.assertEqual(jobs, 1)
+                self.assertEqual(kept, titles)
+                self.assertEqual(stats, [""] * len(titles))
+                self.assertEqual(db.get_settings(), before)
+
+    def test_clear_is_refused_while_a_fetch_is_running(self) -> None:
+        server._running_job_id = 9
+        try:
+            with self.assertRaises(RuntimeError):
+                server.clear_scraped_catalog()
+        finally:
+            server._running_job_id = None
+
+
 class ReloadTests(unittest.TestCase):
     def test_reload_is_idempotent_and_checkpoints_upsert(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -384,7 +436,7 @@ class RefreshDispatchTests(unittest.TestCase):
         started = threading.Event()
         release = threading.Event()
 
-        def fake_crawl(on_progress: object = None) -> tuple[str, dict[str, object]]:
+        def fake_crawl(on_progress: object = None, on_product: object = None) -> tuple[str, dict[str, object]]:
             if callable(on_progress):
                 on_progress("Fetching https://www.safcodental.com/catalog/gloves")
             started.set()
@@ -677,6 +729,66 @@ class FetchTests(unittest.TestCase):
                 "https://www.safcodental.com/product/from-sitemap",
             ],
         )
+
+    def test_child_category_products_are_fetched_past_the_sitemap_cap(self) -> None:
+        seed = "https://www.safcodental.com/catalog/gloves"
+        child = seed + "/nitrile-gloves"
+        photo = "https://www.safcodental.com/media/catalog/product/d/r/drcas.jpg"
+        listing = (
+            f'<a href="{child}">Nitrile</a>'
+            + _product_list("from-seed", "")
+        )
+        child_html = _product_list("from-child", "").replace(
+            '"brand": "Acme"',
+            f'"brand": "Acme", "image": ["{photo}"]',
+        )
+        requested: list[str] = []
+
+        def fake_get(url: str) -> str:
+            requested.append(url)
+            if url.endswith("/robots.txt"):
+                return "User-agent: *\n"
+            if url.endswith("/sitemap.xml"):
+                return "<urlset><loc>https://www.safcodental.com/products.xml</loc></urlset>"
+            if url.endswith("/products.xml"):
+                return (
+                    "<urlset>"
+                    "<loc>https://www.safcodental.com/product/from-sitemap</loc>"
+                    "<loc>https://www.safcodental.com/product/second-sitemap</loc>"
+                    "</urlset>"
+                )
+            if url == child:
+                return child_html
+            if "/catalog/" in url:
+                return listing
+            if "/product/" in url:
+                return "<html>ok</html>"
+            raise AssertionError(url)
+
+        settings = {
+            "min_delay_seconds": "0",
+            "max_products": "40",
+            "max_pages_per_category": "1",
+        }
+        with mock.patch.object(live, "seeds", return_value=[("gloves", seed)]):
+            with mock.patch.object(crawl, "get_settings", return_value=settings):
+                with mock.patch.object(crawl, "terminal_urls", return_value=set()):
+                    with _patched_fetcher(fake_get):
+                        _robots, pages = crawl.crawl()
+        product_urls = [url for url in requested if "/product/" in url]
+        self.assertEqual(
+            product_urls,
+            [
+                "https://www.safcodental.com/product/from-seed",
+                "https://www.safcodental.com/product/from-child",
+                "https://www.safcodental.com/product/from-sitemap",
+            ],
+        )
+        self.assertNotIn("https://www.safcodental.com/product/second-sitemap", product_urls)
+        catalog = server.catalog_from_live("", pages)
+        cards = catalog.categories["gloves"].cards
+        self.assertEqual([card.slug for card in cards], ["from-seed", "from-child"])
+        self.assertEqual(cards[1].image, photo)
 
     def test_out_of_scope_checkpoint_removes_the_stored_parent(self) -> None:
         url = "https://www.safcodental.com/product/clearance-item"

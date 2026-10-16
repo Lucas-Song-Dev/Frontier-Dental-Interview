@@ -82,6 +82,22 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(stored, ["ABC"])
         self.assertTrue(any(step["outcome"] == "deduped" for step in trace.steps))
 
+    def test_shared_sku_set_dedupes_across_separate_runs(self) -> None:
+        seen: set[str] = set()
+        first = run(
+            [],
+            [("one", "sutures", "https://www.safcodental.com/product/one", _product_page("One", "ONE"))],
+            seen_sku=seen,
+        )
+        second = run(
+            [],
+            [("two", "sutures", "https://www.safcodental.com/product/two", _product_page("Two", "TWO"))],
+            seen_sku=seen,
+        )
+        self.assertEqual([row.sku for product in first.products for row in product.variants], ["ABC"])
+        self.assertEqual([row.sku for product in second.products for row in product.variants], [])
+        self.assertTrue(any(step["outcome"] == "deduped" for step in second.steps))
+
 
 if __name__ == "__main__":
     unittest.main()

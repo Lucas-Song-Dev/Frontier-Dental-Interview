@@ -17,8 +17,17 @@ from live import FetchFailed
 from scope import scope_page
 
 
-def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[str, object]]:
-    """Fetch the seed listings and the next slice of product URLs."""
+def crawl(
+    on_progress: Callable[[str], None] | None = None,
+    on_product: Callable[[tuple[str, str, str, str]], None] | None = None,
+) -> tuple[str, dict[str, object]]:
+    """Fetch the seed listings and the next slice of product URLs.
+
+    Product links on the seed pages and on one level of child category pages are
+    fetched in this run. ``?page=`` is not requested. ``max_pages_per_category``
+    limits only the products.xml tail. When ``on_product`` is set, page HTML is
+    handed off and not retained.
+    """
     settings = get_settings()
     delay = int(settings["min_delay_seconds"])
     kept_cap = int(settings["max_products"])
@@ -38,23 +47,27 @@ def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[s
         report(f"Fetching {url}")
         listings.append((key, url, fetcher.get(url)))
     skip = terminal_urls()
-    candidates: list[str] = []
+    discovered: list[str] = []
     seen: set[str] = set()
-    children: list[str] = []
+    children: list[tuple[str, str]] = []
     seen_children: set[str] = set()
-    for _key, url, html in listings:
+
+    def add_slug(slug: str, bucket: list[str]) -> None:
+        if slug in seen:
+            return
+        seen.add(slug)
+        bucket.append(slug)
+
+    for key, url, html in listings:
         for slug in live._product_slugs(html):
-            if slug in seen:
-                continue
-            seen.add(slug)
-            candidates.append(slug)
+            add_slug(slug, discovered)
         for child in live.child_category_urls(html, url):
             if child in seen_children:
                 continue
             seen_children.add(child)
-            children.append(child)
+            children.append((key, child))
     failed: list[dict[str, str]] = []
-    for child in children:
+    for key, child in children:
         if not fetcher.accepts(child):
             continue
         report(f"Fetching {child}")
@@ -63,38 +76,47 @@ def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[s
         except FetchFailed as exc:
             failed.append({"url": child, "detail": str(exc)})
             continue
+        listings.append((key, child, html))
         for slug in live._product_slugs(html):
-            if slug in seen:
-                continue
-            seen.add(slug)
-            candidates.append(slug)
+            add_slug(slug, discovered)
     report(f"Reading {host}/sitemap.xml")
+    sitemap: list[str] = []
     for slug in fetcher.sitemap_slugs():
-        if slug in seen:
-            continue
-        seen.add(slug)
-        candidates.append(slug)
+        add_slug(slug, sitemap)
     products: list[tuple[str, str, str, str]] = []
     attempts = 0
     kept = 0
-    for slug in candidates:
-        if kept >= kept_cap or attempts >= fetch_budget:
-            break
+
+    def fetch_slug(slug: str) -> None:
+        nonlocal attempts, kept
         url = f"{host}/product/{slug}"
-        if url in skip:
-            continue
-        if not fetcher.accepts(url):
-            continue
+        if url in skip or not fetcher.accepts(url):
+            return
         attempts += 1
         report(f"Fetching {url}")
         try:
             html = fetcher.get(url)
         except FetchFailed as exc:
             failed.append({"url": url, "detail": str(exc)})
-            continue
-        products.append((slug, "", url, html))
+            return
+        item = (slug, "", url, html)
+        if on_product is not None:
+            on_product(item)
+        else:
+            products.append(item)
         if scope_page(html).status == "in_scope":
             kept += 1
+
+    for slug in discovered:
+        fetch_slug(slug)
+    sitemap_attempts = 0
+    for slug in sitemap:
+        if sitemap_attempts >= fetch_budget or kept >= kept_cap:
+            break
+        before = attempts
+        fetch_slug(slug)
+        if attempts > before:
+            sitemap_attempts += 1
     return robots, {
         "listings": listings,
         "products": products,

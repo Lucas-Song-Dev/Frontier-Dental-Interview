@@ -8,6 +8,7 @@ import {
   getQueries,
   getRows,
   getSettings,
+  clearScraped,
   refreshSnapshot,
   saveSettings,
 } from "./api.js";
@@ -314,6 +315,7 @@ export default function App() {
   const [now, setNow] = useState(() => Date.now());
   const [extraLinks, setExtraLinks] = useState(readExtraLinks);
   const [error, setError] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const loadDesk = useCallback(async () => {
     const [nextCatalog, nextQueries, nextJobs, nextSettings] = await Promise.all([
@@ -377,6 +379,7 @@ export default function App() {
   }
 
   async function refresh() {
+    setConfirmClear(false);
     setStatus("Sending the crawl…");
     try {
       const result = await refreshSnapshot();
@@ -390,6 +393,29 @@ export default function App() {
       }
       setStatus(`Job #${result.job_id} is running`);
       go(`/jobs/${result.job_id}`);
+    } catch (exc) {
+      setStatus(exc.message);
+    }
+  }
+
+  async function clearData() {
+    if (crawlRunning) {
+      setStatus("Wait for the fetch to finish before clearing.");
+      return;
+    }
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setStatus("Confirm to remove scraped products, cards, and checkpoints. Links and settings stay.");
+      return;
+    }
+    setConfirmClear(false);
+    setStatus("Clearing scraped data…");
+    try {
+      await clearScraped();
+      await loadDesk();
+      setProduct(null);
+      if (path.startsWith("/product/")) go("/");
+      setStatus("Scraped data cleared. Links and settings are unchanged.");
     } catch (exc) {
       setStatus(exc.message);
     }
@@ -469,7 +495,8 @@ export default function App() {
       return;
     }
     const reply = await ask({ query_id: query.id, sku: sku || "" });
-    remember({ who: query.title, ...reply });
+    const code = query.needs_sku ? sku.trim() : "";
+    remember({ who: code ? `${query.title} ${code}` : query.title, ...reply });
     if (path !== "/chat") go("/chat");
   }
 
@@ -601,6 +628,17 @@ export default function App() {
             </span>
           ) : null}
           <IconButton className="text-btn" label="Fetch allowed Safco URLs" tip="below" onClick={refresh}>Refresh</IconButton>
+          <IconButton
+            className={confirmClear ? "text-btn armed" : "text-btn"}
+            label="Clear scraped products, cards, and checkpoints. Links and settings stay."
+            tip="below"
+            onClick={clearData}
+          >
+            {confirmClear ? "Confirm clear" : "Clear data"}
+          </IconButton>
+          {confirmClear ? (
+            <IconButton className="text-btn" label="Keep scraped data" tip="below" onClick={() => { setConfirmClear(false); setStatus(""); }}>Cancel</IconButton>
+          ) : null}
           <IconButton className="icon-btn" label="Primary side bar" tip="below" pressed={panels.primary} onClick={() => togglePanel("primary")}>
             <Icon name="left" />
           </IconButton>
@@ -960,9 +998,30 @@ function DataView({ go, stamp }) {
 
 function CategoryView({ category, catalog, go }) {
   const extra = catalog.products.filter((item) => item.category === category.key && !category.cards.some((card) => card.slug === item.slug));
+  const rows = [
+    ...category.cards.map((card) => {
+      const sheet = catalog.products.find((item) => item.slug === card.slug);
+      return {
+        slug: card.slug,
+        name: card.name,
+        manufacturer: card.manufacturer,
+        price: card.price,
+        saved: card.saved,
+        image: sheet?.image || card.image || "",
+      };
+    }),
+    ...extra.map((item) => ({
+      slug: item.slug,
+      name: item.name,
+      manufacturer: item.brand || "",
+      price: item.price,
+      saved: true,
+      image: item.image || "",
+    })),
+  ];
   return (
     <div className="page">
-      <p className="lead">{category.stats} on the saved listing. Further pages use ?page=, which robots.txt disallows.</p>
+      <p className="lead">{category.stats} on the saved listing. Child categories under each seed are included. Further pages use ?page=, which robots.txt disallows.</p>
       <div className="table-wrap">
         <table>
           <thead>
@@ -975,32 +1034,18 @@ function CategoryView({ category, catalog, go }) {
             </tr>
           </thead>
           <tbody>
-            {category.cards.map((card) => {
-              const sheet = catalog.products.find((item) => item.slug === card.slug);
-              const image = sheet?.image || "";
-              return (
-                <tr key={card.slug}>
-                  <td>{card.saved ? <a href={`/product/${card.slug}`} onClick={(event) => { event.preventDefault(); go(`/product/${card.slug}`); }}>{card.name}</a> : card.name}</td>
-                  <td>{card.manufacturer}</td>
-                  <td>{card.price}</td>
-                  <td>{image ? <img className="thumb" src={image} alt="" /> : ""}</td>
-                  <td>{card.saved ? "Saved" : ""}</td>
-                </tr>
-              );
-            })}
+            {rows.map((card) => (
+              <tr key={card.slug}>
+                <td>{card.saved ? <a href={`/product/${card.slug}`} onClick={(event) => { event.preventDefault(); go(`/product/${card.slug}`); }}>{card.name}</a> : card.name}</td>
+                <td>{card.manufacturer}</td>
+                <td>{card.price}</td>
+                <td>{card.image ? <img className="thumb" src={card.image} alt="" /> : ""}</td>
+                <td>{card.saved ? "Saved" : ""}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
-      {extra.length ? (
-        <>
-          <h2>Also saved from this category</h2>
-          <ul className="plain">
-            {extra.map((item) => (
-              <li key={item.slug}><a href={`/product/${item.slug}`} onClick={(event) => { event.preventDefault(); go(`/product/${item.slug}`); }}>{item.name}</a></li>
-            ))}
-          </ul>
-        </>
-      ) : null}
     </div>
   );
 }
@@ -1179,8 +1224,11 @@ function AskView({ thread, catalog, onAsk }) {
   const scroller = useRef(null);
   useEffect(() => {
     const node = scroller.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [thread.length]);
+    if (!node) return;
+    const last = node.querySelector(".exchange:last-of-type");
+    if (last) last.scrollIntoView({ block: "end" });
+    else node.scrollTop = node.scrollHeight;
+  }, [thread]);
   return (
     <div className="ask">
       <div className="thread" ref={scroller}>
@@ -1489,10 +1537,15 @@ function QueryList({ queries, onRun }) {
     <div className="tree query-tree">
       <div className="tree-label">Allowed for {queries.level}</div>
       {allowed.map((item) => (
-        <div key={item.id} className="query-row">
-          <button type="button" title={item.phrase} onClick={() => onRun(item, sku)}>{item.title}</button>
+        <div key={item.id}>
+          <div className="query-row">
+            <button type="button" title={item.phrase} onClick={() => onRun(item, sku)}><span>{item.title}</span></button>
+          </div>
           {item.needs_sku ? (
-            <input aria-label="SKU" value={sku} onChange={(event) => setSku(event.target.value)} />
+            <label className="sku-field">
+              <span>SKU</span>
+              <input aria-label="SKU" value={sku} onChange={(event) => setSku(event.target.value)} />
+            </label>
           ) : null}
         </div>
       ))}
@@ -1507,18 +1560,28 @@ function QueryList({ queries, onRun }) {
   );
 }
 
+const CODE_COLUMNS = new Set(["sku", "parent_sku", "mfr_number"]);
+
 function ResultTable({ columns, rows }) {
   if (!columns?.length || !rows?.length) return null;
   if (columns.length === 1 && columns[0] === "matches") return null;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap result-table">
       <table>
         <thead>
-          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
+          <tr>
+            {columns.map((column) => (
+              <th key={column} className={CODE_COLUMNS.has(column) ? "mono" : ""}>{column}</th>
+            ))}
+          </tr>
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell ?? ""}</td>)}</tr>
+            <tr key={index}>
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex} className={CODE_COLUMNS.has(columns[cellIndex]) ? "mono" : ""}>{cell ?? ""}</td>
+              ))}
+            </tr>
           ))}
         </tbody>
       </table>
@@ -1530,6 +1593,7 @@ function Output({ output }) {
   if (!output) return <p className="page-note">Run a listed query. The panel stays open until you toggle it.</p>;
   return (
     <div className="output">
+      {output.title ? <p className="who">{output.title}</p> : null}
       <p>{output.answer}</p>
       <ResultTable columns={output.columns} rows={output.rows} />
     </div>

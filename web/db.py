@@ -53,7 +53,8 @@ CREATE TABLE listing_cards (
     name TEXT NOT NULL,
     manufacturer TEXT NOT NULL,
     price_amount REAL,
-    saved INTEGER NOT NULL
+    saved INTEGER NOT NULL,
+    image_url TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE gate (
@@ -174,6 +175,8 @@ VARIANT_COLUMNS = (
     ("attributes", "TEXT NOT NULL DEFAULT '{}'"),
 )
 
+CARD_COLUMNS = (("image_url", "TEXT NOT NULL DEFAULT ''"),)
+
 DEFAULT_SETTINGS = {
     "crawl_interval_minutes": "360",
     "min_delay_seconds": "3",
@@ -291,6 +294,7 @@ def _migrate() -> bool:
         rebuild = "brand" not in _column_names(connection, "products")
         _add_columns(connection, "products", PRODUCT_COLUMNS)
         _add_columns(connection, "variants", VARIANT_COLUMNS)
+        _add_columns(connection, "listing_cards", CARD_COLUMNS)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS agent_steps (
@@ -446,6 +450,7 @@ def reload_catalog(catalog: object) -> dict[str, int]:
                         variant.attributes,
                     )
                 )
+        variant_rows = _unique_variant_rows(variant_rows)
         connection.executemany(
             """
             INSERT INTO variants (
@@ -466,13 +471,14 @@ def reload_catalog(catalog: object) -> dict[str, int]:
                         card.manufacturer,
                         price_amount(card.price),
                         1 if card.saved else 0,
+                        card.image,
                     )
                 )
         connection.executemany(
             """
             INSERT INTO listing_cards
-                (category_key, slug, name, manufacturer, price_amount, saved)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (category_key, slug, name, manufacturer, price_amount, saved, image_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             card_rows,
         )
@@ -508,6 +514,19 @@ def reload_catalog(catalog: object) -> dict[str, int]:
         }
     finally:
         connection.close()
+
+
+def _unique_variant_rows(rows: list[tuple[object, ...]]) -> list[tuple[object, ...]]:
+    """Keep the first row for a child SKU. The variants table keys on sku."""
+    seen: set[str] = set()
+    unique: list[tuple[object, ...]] = []
+    for row in rows:
+        sku = str(row[0])
+        if sku in seen:
+            continue
+        seen.add(sku)
+        unique.append(row)
+    return unique
 
 
 def _write_checkpoints(connection: sqlite3.Connection, checkpoints: list[dict[str, str]]) -> None:
@@ -604,13 +623,14 @@ def upsert_crawl(catalog: object) -> dict[str, int]:
                             card.manufacturer,
                             price_amount(card.price),
                             1 if saved else 0,
+                            card.image,
                         )
                     )
             connection.executemany(
                 """
                 INSERT INTO listing_cards
-                    (category_key, slug, name, manufacturer, price_amount, saved)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (category_key, slug, name, manufacturer, price_amount, saved, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 card_rows,
             )
@@ -668,6 +688,7 @@ def upsert_crawl(catalog: object) -> dict[str, int]:
                         variant.attributes,
                     )
                 )
+        variant_rows = _unique_variant_rows(variant_rows)
         for sku, _slug, *_rest in variant_rows:
             connection.execute("DELETE FROM variants WHERE sku = ?", (sku,))
         if variant_rows:
@@ -747,6 +768,21 @@ def save_settings(incoming: dict[str, str]) -> None:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             list(cleaned.items()),
         )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def clear_scraped() -> None:
+    """Remove fetched catalog rows. Settings, jobs, and category names stay."""
+    connection = connect()
+    try:
+        connection.execute("DELETE FROM variants")
+        connection.execute("DELETE FROM listing_cards")
+        connection.execute("DELETE FROM products")
+        connection.execute("DELETE FROM agent_steps")
+        connection.execute("DELETE FROM checkpoints")
+        connection.execute("UPDATE categories SET stats = ''")
         connection.commit()
     finally:
         connection.close()

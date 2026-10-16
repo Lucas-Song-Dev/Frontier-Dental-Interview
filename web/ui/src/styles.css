@@ -127,6 +127,10 @@ a:hover { text-decoration: underline; }
   color: var(--text);
 }
 
+.text-btn.armed {
+  background: var(--pressed);
+}
+
 .shell {
   display: flex;
   min-width: 0;
@@ -531,14 +535,76 @@ th button {
 .tree .held { color: var(--muted); }
 .tree .held span { font-size: 11px; }
 
-.query-row input {
-  width: calc(100% - 24px);
+.query-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.query-row button {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.query-row button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sku-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 6px 18px;
+}
+
+.sku-field span {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.sku-field input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
   height: 22px;
-  margin: 0 12px 6px;
+  margin: 0;
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--editor);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.result-table { max-width: 100%; }
+.result-table table {
+  width: 100%;
+  min-width: 0;
+}
+.result-table th {
+  white-space: nowrap;
+}
+.result-table td:not(.mono) {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.result-table th:first-child,
+.result-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--editor);
+}
+.panel .result-table th:first-child,
+.panel .result-table td:first-child {
+  background: var(--panel);
 }
 
 .editor {
@@ -696,7 +762,8 @@ td.wrap { white-space: normal; }
   padding: 8px 16px;
 }
 
-.exchange { margin: 0 0 12px; max-width: 68ch; }
+.exchange { margin: 0 0 12px; min-width: 0; }
+.exchange > p { max-width: 68ch; }
 .who { margin: 8px 0 0; font-weight: 600; }
 .exchange p { margin: 2px 0; }
 .exchange .desk { white-space: pre-wrap; }

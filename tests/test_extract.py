@@ -201,6 +201,39 @@ class ListingCardTests(unittest.TestCase):
         self.assertEqual(cards[0].manufacturer, "Maker")
         self.assertEqual(cards[0].price, "$4.00")
 
+    def test_listing_photo_comes_from_json_ld_and_the_hit_grid(self) -> None:
+        photo = "https://www.safcodental.com/media/catalog/product/d/r/drcas.jpg?width=265"
+        page = _ld(
+            _item_list(
+                "Products",
+                [_list_item("lavender-nitrile", "Lavender Nitrile", "Halyard", "38.99", image=photo)],
+            )
+        )
+        cards = extract_listing(page, "gloves").cards
+        self.assertEqual(cards[0].image, photo)
+        hit = (
+            '<li class="ais-Hits-item">'
+            '<a href="https://www.safcodental.com/product/from-hit">x</a>'
+            '<h3 itemprop="name">From hit</h3>'
+            f'<img src="{photo}&amp;height=265" alt="From hit">'
+            "</li>"
+        )
+        hit_cards = extract_listing(hit, "gloves").cards
+        self.assertEqual(hit_cards[0].image, photo + "&height=265")
+
+    def test_saved_listings_keep_a_photo_for_every_card(self) -> None:
+        for name, key in (
+            ("listing_gloves.html", "gloves"),
+            ("listing_sutures.html", "sutures"),
+        ):
+            page = (FIXTURES / name).read_text(encoding="utf-8")
+            cards = extract_listing(page, key).cards
+            self.assertTrue(cards, name)
+            self.assertTrue(
+                all(card.image.startswith("https://www.safcodental.com/media/catalog/product/") for card in cards),
+                name,
+            )
+
     def test_json_ld_wins_when_both_lists_differ(self) -> None:
         page = _ld(
             _item_list("Products", [_list_item("from-json", "From JSON", "Brand", "1.00")])
@@ -252,6 +285,7 @@ def _list_item(
     *,
     url_on_item: bool = True,
     brand_as_string: bool = False,
+    image: str = "",
 ) -> dict[str, object]:
     url = f"https://www.safcodental.com/product/{slug}"
     brand_value: object = brand if brand_as_string else {"@type": "Brand", "name": brand}
@@ -261,6 +295,8 @@ def _list_item(
         "brand": brand_value,
         "offers": {"@type": "Offer", "price": price},
     }
+    if image:
+        item["image"] = [image]
     element: dict[str, object] = {"@type": "ListItem", "item": item}
     if url_on_item:
         item["url"] = url

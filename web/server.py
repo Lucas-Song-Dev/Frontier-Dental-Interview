@@ -17,6 +17,7 @@ from crawl import crawl
 from db import (
     SCHEMA_DOC,
     SETTING_BOUNDS,
+    clear_scraped,
     connect,
     ensure_database,
     ensure_settings,
@@ -43,6 +44,7 @@ from export_catalog import (
 )
 from extract import extract_variants
 from live import FetchBlocked
+from pipeline import Run
 from pipeline import run as run_pipeline
 from queries import LEVELS, describe, normalize_level
 
@@ -96,6 +98,7 @@ class ListingCard:
     manufacturer: str
     price: str
     saved: bool
+    image: str = ""
 
 
 @dataclass
@@ -836,30 +839,51 @@ def settings_page(error: str = "", saved: bool = False) -> str:
     return layout("Settings", "settings", body)
 
 
-def catalog_from_live(robots: str, pages: dict[str, object]) -> Catalog:
+def catalog_from_live(
+    robots: str,
+    pages: dict[str, object],
+    extra: Run | None = None,
+) -> Catalog:
     listings = pages["listings"]
     fetched_products = pages["products"]
     assert isinstance(listings, list)
     assert isinstance(fetched_products, list)
     trace = run_pipeline(listings, fetched_products)
+    if extra is not None:
+        trace.products.extend(extra.products)
+        trace.steps.extend(extra.steps)
+        trace.checkpoints.extend(extra.checkpoints)
     categories: dict[str, Category] = {}
     for parsed in trace.listings:
-        category = Category(
-            key=parsed.key,
-            title=parsed.title,
-            stats=parsed.stats,
-            cards=[
-                ListingCard(
-                    slug=card.slug,
-                    name=card.name,
-                    manufacturer=card.manufacturer,
-                    price=card.price,
-                    saved=False,
-                )
-                for card in parsed.cards
-            ],
-        )
-        categories[parsed.key] = category
+        incoming = [
+            ListingCard(
+                slug=card.slug,
+                name=card.name,
+                manufacturer=card.manufacturer,
+                price=card.price,
+                saved=False,
+                image=card.image,
+            )
+            for card in parsed.cards
+        ]
+        current = categories.get(parsed.key)
+        if current is None:
+            categories[parsed.key] = Category(
+                key=parsed.key,
+                title=parsed.title,
+                stats=parsed.stats,
+                cards=incoming,
+            )
+            continue
+        by_slug = {card.slug: card for card in current.cards}
+        for card in incoming:
+            previous = by_slug.get(card.slug)
+            if previous is None:
+                current.cards.append(card)
+                by_slug[card.slug] = card
+                continue
+            if card.image and not previous.image:
+                previous.image = card.image
     products = {parsed.slug: _product_from_parsed(parsed) for parsed in trace.products}
     for category in categories.values():
         for card in category.cards:
@@ -889,7 +913,7 @@ def load_catalog() -> Catalog | None:
         if not category_rows:
             return None
         card_rows = connection.execute(
-            "SELECT category_key, slug, name, manufacturer, price_amount, saved FROM listing_cards"
+            "SELECT category_key, slug, name, manufacturer, price_amount, saved, image_url FROM listing_cards"
         ).fetchall()
         product_rows = connection.execute(
             "SELECT slug, category_key, name, parent_sku, price_amount, availability, "
@@ -916,6 +940,7 @@ def load_catalog() -> Catalog | None:
                 manufacturer=str(row["manufacturer"]),
                 price=_stored_price(row["price_amount"]),
                 saved=bool(row["saved"]),
+                image=str(row["image_url"] or ""),
             )
         )
     categories = {
@@ -974,6 +999,36 @@ _refresh_guard = threading.Lock()
 _running_job_id: int | None = None
 
 
+def clear_scraped_catalog() -> None:
+    """Drop fetched products and checkpoints. Settings, jobs, and saved links stay."""
+    global CATALOG
+    with _refresh_guard:
+        if _running_job_id is not None:
+            raise RuntimeError("A fetch is still running.")
+        clear_scraped()
+    loaded = load_catalog()
+    if loaded is None:
+        raise RuntimeError("Catalog categories are missing.")
+    for category in loaded.categories.values():
+        category.cards = []
+        category.stats = ""
+    loaded.products = {}
+    loaded.steps = []
+    loaded.checkpoints = []
+    CATALOG = loaded
+    publish(CATALOG, [])
+    _clear_saved_images()
+
+
+def _clear_saved_images() -> None:
+    folder = ROOT.parent / "data" / "sample" / "images"
+    if not folder.is_dir():
+        return
+    for path in folder.iterdir():
+        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+            path.unlink()
+
+
 def begin_refresh() -> int:
     """Record a running job and fetch in the background. A second call returns that same job."""
     global _running_job_id
@@ -994,8 +1049,20 @@ def begin_refresh() -> int:
 def _run_refresh(job_id: int) -> None:
     global CATALOG, _running_job_id
     try:
-        robots, pages = crawl(on_progress=lambda message: update_job(job_id, message))
-        catalog = catalog_from_live(robots, pages)
+        extra = Run()
+        seen_sku: set[str] = set()
+
+        def on_product(item: tuple[str, str, str, str]) -> None:
+            part = run_pipeline([], [item], seen_sku=seen_sku)
+            extra.products.extend(part.products)
+            extra.steps.extend(part.steps)
+            extra.checkpoints.extend(part.checkpoints)
+
+        robots, pages = crawl(
+            on_progress=lambda message: update_job(job_id, message),
+            on_product=on_product,
+        )
+        catalog = catalog_from_live(robots, pages, extra)
         failed = pages["failed"]
         assert isinstance(failed, list)
         for item in failed:
@@ -1111,6 +1178,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(413, {"answer": "That question is too long.", "sql": "", "columns": [], "rows": []})
             return
         raw = self.rfile.read(length)
+        if path == "/api/clear":
+            try:
+                clear_scraped_catalog()
+            except RuntimeError as exc:
+                self._json(409, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True})
+            return
         if path == "/api/refresh":
             try:
                 job_id = begin_refresh()
@@ -1276,6 +1351,7 @@ def _catalog_payload() -> dict:
                         "manufacturer": card.manufacturer,
                         "price": card.price,
                         "saved": card.saved,
+                        "image": card.image,
                     }
                     for card in category.cards
                 ],
@@ -1291,6 +1367,7 @@ def _catalog_payload() -> dict:
                 "availability": product.availability,
                 "category": product.category,
                 "variants": len(product.variants),
+                "brand": product.brand,
                 "image": next(iter(_json_list(product.image_urls)), ""),
             }
             for product in CATALOG.products.values()

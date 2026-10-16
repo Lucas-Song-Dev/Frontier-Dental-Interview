@@ -38,12 +38,18 @@ def run(
     listings: list[tuple[str, str, str]],
     products: list[tuple[str, str, str, str]],
     decide: Decide | None = None,
+    seen_sku: set[str] | None = None,
 ) -> Run:
-    """Classify and extract pages that were already fetched. Pagination URLs are recorded only."""
+    """Classify and extract pages that were already fetched. Pagination URLs are recorded only.
+
+    ``seen_sku`` is shared across calls when product pages are extracted one at a time.
+    A child SKU already in that set is dropped, matching a single batch.
+    """
     from claude import decide_scope
 
     result = Run()
-    seen_sku: set[str] = set()
+    if seen_sku is None:
+        seen_sku = set()
     seen_slug: set[str] = set()
     chooser = decide if decide is not None else decide_scope
     for key, url, html_text in listings:

@@ -22,6 +22,7 @@ class ParsedCard:
     name: str
     manufacturer: str
     price: str
+    image: str = ""
 
 
 @dataclass
@@ -317,6 +318,7 @@ def _card_from_list_item(element: dict[str, Any]) -> ParsedCard | None:
         name=name,
         manufacturer=_brand(cast(dict[Any, Any], product)),
         price=_offer_price(product.get("offers")),
+        image=_first_image(product),
     )
 
 
@@ -341,6 +343,12 @@ def _product_slug(url: str) -> str:
     slug = url.split("/product/", 1)[1]
     slug = unquote(slug.split("?", 1)[0].split("#", 1)[0]).strip("/")
     return slug
+
+
+def _first_image(product: dict[str, Any]) -> str:
+    """The first product photo in JSON-LD. Size variants of one file stay one URL."""
+    found = image_urls("", product)
+    return found[0] if found else ""
 
 
 def _offer_price(offers: object) -> str:
@@ -373,12 +381,17 @@ def _hit_cards(page: str) -> list[ParsedCard]:
         seen.add(slug)
         maker = re.search(r'manufacturer-name[^>]*>\s*([^<]+)', chunk)
         amount = re.search(r"\$\s*([0-9,]+\.[0-9]{2})", chunk)
+        photo = re.search(
+            r'<img\b[^>]*\bsrc="(https://www\.safcodental\.com/media/[^"]+)"',
+            chunk,
+        )
         cards.append(
             ParsedCard(
                 slug=slug,
                 name=unescape(name.group(1)),
                 manufacturer=unescape(maker.group(1)) if maker else "",
                 price=money(amount.group(1).replace(",", "")) if amount else "",
+                image=unescape(photo.group(1)) if photo else "",
             )
         )
     return cards

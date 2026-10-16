@@ -47,6 +47,15 @@ export async function saveSettings(settings) {
   return payload;
 }
 
+export async function clearScraped() {
+  const response = await fetch("/api/clear", { method: "POST" });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "Could not clear scraped data.");
+  }
+  return payload;
+}
+
 export async function refreshSnapshot() {
   const response = await fetch("/api/refresh", { method: "POST" });
   const payload = await response.json();

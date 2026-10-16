@@ -7,8 +7,8 @@ import re
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-import urllib.robotparser
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -66,18 +66,149 @@ def _product_token(user_agent: str) -> str:
     return token.split(None, 1)[0].lower()
 
 
+class _Rule:
+    """One Allow or Disallow path. An empty Disallow allows every path."""
+
+    def __init__(self, path: str, allowance: bool) -> None:
+        if path == "" and not allowance:
+            allowance = True
+        path = re.sub(r"[*]{2,}", "*", path)
+        path = re.sub(r"[$][$*]+", "$", path)
+        path = _normalize_pattern(path)
+        fullmatch = path.endswith("$")
+        path = path.rstrip("$")
+        if "$" in path:
+            raise ValueError("$ not at the end of path")
+        self.fullmatch = fullmatch
+        self.path = path
+        self.allowance = allowance
+        self.pattern = re.compile(_translate_pattern(path), re.DOTALL) if "*" in path else None
+
+    def applies_to(self, filename: str) -> int:
+        """Matching length plus one, or 0 when the path does not match."""
+        if self.pattern is not None:
+            matched = self.pattern.fullmatch(filename) if self.fullmatch else self.pattern.match(filename)
+            if matched:
+                return matched.end() + 1
+            return 0
+        if self.fullmatch:
+            if filename == self.path:
+                return len(self.path) + 1
+            return 0
+        if filename.startswith(self.path):
+            return len(self.path) + 1
+        return 0
+
+
+def _normalize(path: str) -> str:
+    unquoted = urllib.parse.unquote(path, errors="surrogateescape")
+    return urllib.parse.quote(unquoted, errors="surrogateescape")
+
+
+def _normalize_uri(path: str) -> str:
+    path, sep, query = path.partition("?")
+    path = _normalize(path)
+    if sep:
+        query = re.sub(r"[^=&]+", lambda match: _normalize(match[0]), query)
+        path += "?" + query
+    return path
+
+
+def _normalize_pattern(path: str) -> str:
+    path, sep, query = path.partition("?")
+    path = re.sub(r"[^*$]+", lambda match: _normalize(match[0]), path)
+    if sep:
+        query = re.sub(r"[^=&*$]+", lambda match: _normalize(match[0]), query)
+        path += "?" + query
+    return path
+
+
+def _translate_pattern(path: str) -> str:
+    parts = [re.escape(part) for part in path.split("*")]
+    for index in range(1, len(parts) - 1):
+        parts[index] = f"(?:.*?{parts[index]})"
+    parts[-1] = f".*{parts[-1]}"
+    return "".join(parts)
+
+
+def _request_path(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    path = urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, parsed.fragment))
+    path = _normalize_uri(path)
+    return path or "/"
+
+
+def _parse_groups(body: str) -> dict[str, list[_Rule]]:
+    """Group names are lowercase product tokens. Records are split by a new User-agent after a rule."""
+    groups: dict[str, list[_Rule]] = {}
+    agents: list[str] = []
+    rules: list[_Rule] = []
+    started = False
+
+    def flush() -> None:
+        nonlocal agents, rules, started
+        if not agents:
+            return
+        for agent in agents:
+            groups.setdefault(agent.lower(), []).extend(rules)
+        agents = []
+        rules = []
+        started = False
+
+    for raw in body.splitlines():
+        hashed = raw.find("#")
+        if hashed >= 0:
+            raw = raw[:hashed]
+        line = raw.strip()
+        if not line or ":" not in line:
+            continue
+        field, value = line.split(":", 1)
+        field = field.strip().lower()
+        value = value.strip()
+        if field == "user-agent":
+            if started:
+                flush()
+            agents.append(value)
+        elif field in {"allow", "disallow"} and agents:
+            started = True
+            try:
+                rules.append(_Rule(value, field == "allow"))
+            except ValueError:
+                pass
+        elif field in {"crawl-delay", "request-rate"} and agents:
+            started = True
+    flush()
+    return groups
+
+
+def _group_allows(rules: list[_Rule], url: str) -> bool:
+    path = _request_path(url)
+    if path == "/robots.txt":
+        return True
+    best = -1
+    allowance = True
+    for rule in rules:
+        length = rule.applies_to(path)
+        if not length:
+            continue
+        if length > best:
+            best = length
+            allowance = rule.allowance
+        elif length == best and not allowance:
+            allowance = rule.allowance
+    return allowance
+
+
 class RobotsPolicy:
     """A loaded robots.txt. Empty allow-all rules are still a loaded policy."""
 
-    def __init__(self, parser: urllib.robotparser.RobotFileParser, user_agent: str) -> None:
-        self._parser = parser
+    def __init__(self, groups: dict[str, list[_Rule]], user_agent: str) -> None:
+        self._groups = groups
         self._user_agent = user_agent
 
     @classmethod
     def parse(cls, body: str, user_agent: str) -> RobotsPolicy:
-        parser = urllib.robotparser.RobotFileParser()
-        parser.parse(body.splitlines())
-        return cls(parser, user_agent)
+        return cls(_parse_groups(body), user_agent)
 
     def allowed(self, url: str) -> bool:
         """True when every matching group allows the URL.
@@ -86,14 +217,14 @@ class RobotsPolicy:
         match ``CatalogDesk``. A specific group does not drop ``User-agent: *``.
         """
         token = _product_token(self._user_agent)
-        groups: list[str] = []
-        if token in self._parser.groups and token != "*":
-            groups.append(token)
-        if "*" in self._parser.groups:
-            groups.append("*")
-        if not groups:
+        names: list[str] = []
+        if token in self._groups and token != "*":
+            names.append(token)
+        if "*" in self._groups:
+            names.append("*")
+        if not names:
             return True
-        return all(self._parser.can_fetch(group, url) for group in groups)
+        return all(_group_allows(self._groups[name], url) for name in names)
 
 
 class RateLimiter:
