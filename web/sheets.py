@@ -9,7 +9,7 @@ from pathlib import Path
 from db import get_settings, reload_catalog
 from export_catalog import publish
 from extract import extract_listing
-from live import ORIGIN, ROBOTS_URL, FetchBlocked, _Clock, _disallow_rules, _get, fetch_bytes
+from live import ORIGIN, FetchBlocked, Fetcher
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -53,9 +53,8 @@ def save_page_one() -> None:
     from server import catalog_from_live
 
     delay = int(get_settings()["min_delay_seconds"])
-    clock = _Clock(delay)
-    robots = _get(ROBOTS_URL, clock, [])
-    rules = _disallow_rules(robots)
+    fetcher = Fetcher(delay)
+    robots = fetcher.fetch_robots()
     listings: list[tuple[str, str, str]] = []
     jobs: list[tuple[str, str]] = []
     for key, url, path in LISTINGS:
@@ -76,7 +75,7 @@ def save_page_one() -> None:
             print(f"sheet {slug} from saved HTML", flush=True)
             continue
         try:
-            products.append((slug, key, url, _get(url, clock, rules)))
+            products.append((slug, key, url, fetcher.get(url)))
             print(f"sheet {slug} fetched", flush=True)
         except (FetchBlocked, RuntimeError) as exc:
             print(f"sheet {slug} skipped: {exc}", flush=True)
@@ -98,7 +97,7 @@ def save_page_one() -> None:
             current.insert(0, remote)
         product.image_urls = json.dumps(current, ensure_ascii=False)
         try:
-            body, content_type = fetch_bytes(remote, clock, rules)
+            body, content_type = fetcher.fetch_bytes(remote)
         except (FetchBlocked, RuntimeError) as exc:
             print(f"image {product.slug} skipped: {exc}", flush=True)
             continue

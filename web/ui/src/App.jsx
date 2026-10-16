@@ -228,6 +228,16 @@ function withNewChat(store) {
   return { activeId: chat.id, chats: sortChats([chat, ...store.chats]).slice(0, CHAT_LIMIT) };
 }
 
+function withoutChat(store, id) {
+  const chats = store.chats.filter((chat) => chat.id !== id);
+  if (!chats.length) {
+    const chat = blankChat();
+    return { activeId: chat.id, chats: [chat] };
+  }
+  const activeId = chats.some((chat) => chat.id === store.activeId) ? store.activeId : chats[0].id;
+  return { activeId, chats };
+}
+
 function ageLabel(updatedAt, now) {
   const minutes = Math.max(0, Math.floor((now - updatedAt) / 60000));
   if (minutes < 1) return "now";
@@ -489,6 +499,15 @@ export default function App() {
     openPanel("primary");
   }
 
+  function removeChat(id) {
+    const next = withoutChat(chats, id);
+    setChats(next);
+    if (next.activeId === chats.activeId) return;
+    const chat = next.chats.find((item) => item.id === next.activeId);
+    const last = chat?.thread.at(-1);
+    setOutput(last ? { title: last.who, ...last } : null);
+  }
+
   const activeChat = chats.chats.find((chat) => chat.id === chats.activeId) || chats.chats[0];
   const thread = activeChat?.thread || [];
   const activity = activityFor(path);
@@ -611,7 +630,7 @@ export default function App() {
         {panels.primary ? (
           <aside className="sidebar" style={{ width: sizes.sidebar }}>
             {activity === "ask" ? (
-              <ChatList chats={chats.chats} activeId={activeChat?.id || ""} now={now} onOpen={selectChat} onNew={startChat} />
+              <ChatList chats={chats.chats} activeId={activeChat?.id || ""} now={now} onOpen={selectChat} onNew={startChat} onDelete={removeChat} />
             ) : (
               <div className="tree">
                 {tree.map((group) => (
@@ -1128,7 +1147,7 @@ function GateView({ catalog }) {
   );
 }
 
-function ChatList({ chats, activeId, now, onOpen, onNew }) {
+function ChatList({ chats, activeId, now, onOpen, onNew, onDelete }) {
   return (
     <div className="tree chat-list">
       <div className="chat-head">
@@ -1136,16 +1155,20 @@ function ChatList({ chats, activeId, now, onOpen, onNew }) {
         <button type="button" className="chat-new" aria-label="New chat" onClick={onNew}>+</button>
       </div>
       {chats.map((chat) => (
-        <button
-          key={chat.id}
-          type="button"
-          className={chat.id === activeId ? "chat-row is-current" : "chat-row"}
-          aria-current={chat.id === activeId ? "true" : undefined}
-          onClick={() => onOpen(chat.id)}
-        >
-          <span className="chat-title">{chat.title}</span>
-          <span className="chat-age">{ageLabel(chat.updatedAt, now)}</span>
-        </button>
+        <div key={chat.id} className={chat.id === activeId ? "chat-row is-current" : "chat-row"}>
+          <button
+            type="button"
+            className="chat-open"
+            aria-current={chat.id === activeId ? "true" : undefined}
+            onClick={() => onOpen(chat.id)}
+          >
+            <span className="chat-title">{chat.title}</span>
+            <span className="chat-age">{ageLabel(chat.updatedAt, now)}</span>
+          </button>
+          <IconButton className="chat-delete" label="Delete chat" tip="left" onClick={() => onDelete(chat.id)}>
+            <Icon name="trash" />
+          </IconButton>
+        </div>
       ))}
     </div>
   );

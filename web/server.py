@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 from chat import Reply, ask
 from claude import configured
@@ -115,14 +115,6 @@ class Catalog:
     checkpoints: list[dict[str, str]] = field(default_factory=list)
 
 
-def unescape(value: str) -> str:
-    return html.unescape(re.sub(r"\s+", " ", value)).strip()
-
-
-def money(amount: str) -> str:
-    return f"${amount}"
-
-
 def parse_master(page: str) -> list[Variant]:
     return [
         Variant(
@@ -149,46 +141,6 @@ def parse_product_html(page: str, slug: str, category: str, url: str = "") -> Pr
 
     parsed = extract_product(page, slug, category, url)
     return _product_from_parsed(parsed)
-
-
-def parse_listing(path: Path, key: str) -> Category:
-    return parse_listing_html(path.read_text(encoding="utf-8"), key)
-
-
-def parse_listing_html(page: str, key: str) -> Category:
-    heading = re.search(r"<h1[^>]*>(.*?)</h1>", page, re.S)
-    title = unescape(re.sub(r"<[^>]+>", "", heading.group(1))) if heading else key
-    stats_at = page.find('class="ais-Stats"')
-    stats = ""
-    if stats_at >= 0:
-        block = unescape(re.sub(r"<[^>]+>", " ", page[stats_at : stats_at + 700]))
-        found = re.search(r"Items\s+\d+\s*-\s*\d+\s+of\s+\d+", block)
-        stats = found.group(0) if found else ""
-    cards: list[ListingCard] = []
-    seen: set[str] = set()
-    for chunk in page.split('<li class="ais-Hits-item')[1:]:
-        href = re.search(
-            r'href="https://www\.safcodental\.com/product/([^"]+)"', chunk
-        )
-        name = re.search(r'itemprop="name"[^>]*>\s*([^<]+)', chunk)
-        if not href or not name:
-            continue
-        slug = unquote(href.group(1)).strip("/")
-        if slug in seen:
-            continue
-        seen.add(slug)
-        maker = re.search(r'manufacturer-name[^>]*>\s*([^<]+)', chunk)
-        amount = re.search(r"\$\s*([0-9,]+\.[0-9]{2})", chunk)
-        cards.append(
-            ListingCard(
-                slug=slug,
-                name=unescape(name.group(1)),
-                manufacturer=unescape(maker.group(1)) if maker else "",
-                price=money(amount.group(1).replace(",", "")) if amount else "",
-                saved=False,
-            )
-        )
-    return Category(key=key, title=title, stats=stats, cards=cards)
 
 
 def _product_from_parsed(parsed: object) -> Product:
@@ -868,7 +820,7 @@ def settings_page(error: str = "", saved: bool = False) -> str:
   </div>
   {_setting_field("crawl_interval_minutes", "Time between crawls", "Stored for a later worker. This desk does not start a crawl on a timer. 15 to 10080.", settings, 15, 10080)}
   {_setting_field("min_delay_seconds", "Minimum delay", "Seconds between requests. Kept at or above 1. SQLite overrides config.yaml for a desk run.", settings, 1, 60)}
-  {_setting_field("max_concurrency", "Max concurrency", "Stored for a later worker. This desk fetches one page at a time so the delay stays a single clock.", settings, 1, 2)}
+  {_setting_field("max_concurrency", "Max concurrency", "Stored for a later worker. This desk fetches one page at a time so the delay stays a single limiter.", settings, 1, 2)}
   {_setting_field("max_products", "Max products per run", "Stop after this many newly kept parent products. 1 to 5000.", settings, 1, 5000)}
   {_setting_field("max_pages_per_category", "Product fetches per run", "How many product pages one run may request. Extracted and out-of-scope URLs are skipped. ?page= stays disallowed.", settings, 1, 20)}
   <div class="field">
@@ -1425,7 +1377,7 @@ def _pipeline_payload() -> dict[str, object]:
         "exports": ["/api/export.csv", "/api/export.json", "/api/export.xlsx"],
         "production": [
             {"title": "Rate limiting", "body": f"Live fetches wait at least {config['min_delay_seconds']} seconds. Settings can raise that delay and cannot set it below 1."},
-            {"title": "Retries", "body": "429, 5xx, and timeouts are retried a few times. Each attempt waits on the same delay and passes the robots check. Other 4xx responses are not retried."},
+            {"title": "Retries", "body": "429 and 503 wait for a parsed Retry-After, capped at 60 seconds and never shorter than the delay. Other 5xx responses and timeouts use that delay. A robots block is not requested. Other 4xx responses are not retried."},
             {"title": "Checkpointing", "body": "Extracted and out-of-scope URLs are skipped on the next run. Unresolved and failed URLs are fetched again."},
             {"title": "Logging", "body": "Pipeline stages are stored in agent_steps and written to data/sample/pipeline-log.jsonl. Secrets are not logged."},
             {"title": "Deduplication", "body": "The validator keeps the first row for each child SKU."},

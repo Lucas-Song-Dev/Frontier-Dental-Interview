@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 import live
 from db import get_settings, terminal_urls
-from live import FetchBlocked, FetchFailed
+from live import FetchFailed
 from scope import scope_page
 
 
@@ -24,7 +24,7 @@ def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[s
     kept_cap = int(settings["max_products"])
     fetch_budget = int(settings["max_pages_per_category"])
     host = live.origin()
-    clock = live._Clock(delay)
+    fetcher = live.Fetcher(delay)
 
     def report(message: str) -> None:
         if on_progress is not None:
@@ -32,13 +32,11 @@ def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[s
 
     robots_url = f"{host}/robots.txt"
     report(f"Reading {robots_url}")
-    robots = live._get(robots_url, clock, [])
-    rules = live._disallow_rules(robots)
+    robots = fetcher.fetch_robots()
     listings: list[tuple[str, str, str]] = []
     for key, url in live.seeds():
-        live._require_allowed(url, rules)
         report(f"Fetching {url}")
-        listings.append((key, url, live._get(url, clock, rules)))
+        listings.append((key, url, fetcher.get(url)))
     skip = terminal_urls()
     candidates: list[str] = []
     seen: set[str] = set()
@@ -57,13 +55,11 @@ def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[s
             children.append(child)
     failed: list[dict[str, str]] = []
     for child in children:
-        try:
-            live._require_allowed(child, rules)
-        except FetchBlocked:
+        if not fetcher.accepts(child):
             continue
         report(f"Fetching {child}")
         try:
-            html = live._get(child, clock, rules)
+            html = fetcher.get(child)
         except FetchFailed as exc:
             failed.append({"url": child, "detail": str(exc)})
             continue
@@ -73,7 +69,7 @@ def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[s
             seen.add(slug)
             candidates.append(slug)
     report(f"Reading {host}/sitemap.xml")
-    for slug in live._sitemap_slugs(clock, rules):
+    for slug in fetcher.sitemap_slugs():
         if slug in seen:
             continue
         seen.add(slug)
@@ -87,14 +83,12 @@ def crawl(on_progress: Callable[[str], None] | None = None) -> tuple[str, dict[s
         url = f"{host}/product/{slug}"
         if url in skip:
             continue
-        try:
-            live._require_allowed(url, rules)
-        except FetchBlocked:
+        if not fetcher.accepts(url):
             continue
         attempts += 1
         report(f"Fetching {url}")
         try:
-            html = live._get(url, clock, rules)
+            html = fetcher.get(url)
         except FetchFailed as exc:
             failed.append({"url": url, "detail": str(exc)})
             continue

@@ -133,8 +133,9 @@ class FetchTests(unittest.TestCase):
             captured["context"] = context
             return _Response()
 
+        fetcher = live.Fetcher(0)
         with mock.patch.object(live.urllib.request, "urlopen", urlopen):
-            body = live._get(ROBOTS, live._Clock(0), [])
+            body = fetcher.fetch_robots()
         self.assertIn("Disallow", body)
         self.assertEqual(captured["url"], ROBOTS)
         context = captured["context"]
@@ -153,21 +154,26 @@ class FetchTests(unittest.TestCase):
             self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
             raise urllib.error.URLError("CERTIFICATE_VERIFY_FAILED")
 
+        fetcher = live.Fetcher(0)
         with mock.patch.object(live.urllib.request, "urlopen", urlopen):
             with self.assertRaises(RuntimeError) as caught:
-                live._get(ROBOTS, live._Clock(0), [])
+                fetcher.fetch_robots()
+        self.assertIsNone(fetcher.policy)
         self.assertEqual(str(caught.exception), f"Could not reach {ROBOTS}")
 
     def test_listing_pagination_is_not_fetched(self) -> None:
-        rules = live._disallow_rules("User-agent: *\nDisallow: /*?page=\nDisallow: /*?p=\n")
+        fetcher = live.Fetcher(0)
+        fetcher.policy = live.RobotsPolicy.parse(
+            "User-agent: *\nDisallow: /*?page=\nDisallow: /*?p=\n",
+            live.user_agent(),
+        )
         for url in (
             "https://www.safcodental.com/catalog/gloves?page=2",
             "https://www.safcodental.com/catalog/gloves?p=2",
         ):
-            with self.assertRaises(live.FetchBlocked):
-                live._require_allowed(url, rules)
-        live._require_allowed("https://www.safcodental.com/catalog/gloves", rules)
-        live._require_allowed("https://www.safcodental.com/product/perma-sharp-reg-sutures", rules)
+            self.assertFalse(fetcher.accepts(url))
+        self.assertTrue(fetcher.accepts("https://www.safcodental.com/catalog/gloves"))
+        self.assertTrue(fetcher.accepts("https://www.safcodental.com/product/perma-sharp-reg-sutures"))
 
 
 class StartupTests(unittest.TestCase):

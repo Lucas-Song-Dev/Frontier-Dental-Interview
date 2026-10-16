@@ -181,6 +181,12 @@ a:hover { text-decoration: underline; }
   transform: translateX(-50%);
 }
 
+.tip-left .tip {
+  right: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .layout-controls .icon-btn:last-child .tip {
   left: auto;
   right: 0;
@@ -324,16 +330,48 @@ body.is-row-resize * {
 }
 
 .tree .chat-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   width: calc(100% - 16px);
   margin: 1px 8px;
   min-height: 28px;
-  padding: 2px 8px;
+  padding: 0 2px 0 8px;
   border-radius: 6px;
 }
 
-.tree .chat-row.is-current { background: var(--pressed); }
+.tree .chat-row:hover { background: var(--hover); }
 
+.tree .chat-row.is-current,
 .tree .chat-row.is-current:hover { background: var(--pressed); }
+
+.tree .chat-open {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 2px 4px 2px 0;
+}
+
+.tree .chat-open:hover,
+.tree .chat-open:focus-visible { background: transparent; }
+
+.tree .chat-delete {
+  flex: none;
+  width: 22px;
+  min-height: 22px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+.tree .chat-delete:hover,
+.tree .chat-delete:focus-visible {
+  z-index: 2;
+  background: var(--editor);
+  color: var(--text);
+}
 
 .chat-title {
   min-width: 0;

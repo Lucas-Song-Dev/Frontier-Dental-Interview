@@ -55,6 +55,15 @@ export function Icon({ name }) {
       </svg>
     );
   }
+  if (name === "trash") {
+    return (
+      <svg {...common}>
+        <path d="M3.2 4.5h9.6" />
+        <path d="M6.2 4.5V3h3.6v1.5" />
+        <path d="M4.5 4.5l.6 8.7h5.8l.6-8.7" />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <rect x="2" y="2.5" width="12" height="11" rx="1" />

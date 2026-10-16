@@ -4,6 +4,7 @@ A local prototype that extracts Safco Dental products from two categories, store
 
 - [Architecture overview](#architecture-overview)
 - [Why you chose your approach](#why-you-chose-your-approach)
+- [Robots and pagination](#robots-and-pagination)
 - [Agent responsibilities](#agent-responsibilities)
 - [Setup and execution](#setup-and-execution)
 - [Sample output schema](#sample-output-schema)
@@ -72,11 +73,28 @@ The prompt lists a navigator, a page classifier, an extractor, a validator, and 
 
 ## Production design
 
-**How.** `web/live.py` waits with `_Clock` between fetches and refuses a URL, including a redirect, that fails `_require_allowed`. A 429, a 5xx, or a timeout is retried up to three times, and each attempt waits on that same clock. Any other HTTP error is not retried. `web/crawl.py` fetches the two seeds, then one level of `/catalog/` URLs under each seed, and queues product links from those pages ahead of `products.xml`. `max_products` counts newly kept parents. `max_pages_per_category` counts product-page attempts in one run. Child category fetches sit outside that cap. URLs checkpointed `extracted` or `out_of_scope` are skipped. `unresolved` and `failed` are fetched again. A crawl upserts the parents it kept. A URL checkpointed `out_of_scope` deletes that parent and its child SKUs. Other parents stay. Publishing drops a row whose breadcrumb fails `scope_path`, or whose `category_key` does not match that breadcrumb. Starting the desk does not rewrite `data/sample/`. `config.yaml` supplies the origin, user agent, seeds, and default delay. SQLite settings override the delay and the caps for a desk run. `CLAUDE_API_KEY` stays in `.env`. The pipeline log does not contain it.
+**How.** `web/live.py` fetches through a `Fetcher`. A catalog URL is not requested until `robots.txt` has loaded. The policy and a final redirect are both checked, and `?page=` / `?p=` are refused even when the policy allows them. A 429 or 503 waits for a parsed `Retry-After`, capped at 60 seconds and never shorter than the configured delay. Other 5xx responses and timeouts retry up to three times on that delay. Any other HTTP error is not retried. A robots block is not requested. `web/crawl.py` fetches the two seeds, then one level of `/catalog/` URLs under each seed, and queues product links from those pages ahead of `products.xml`. `max_products` counts newly kept parents. `max_pages_per_category` counts product-page attempts in one run. Child category fetches sit outside that cap. URLs checkpointed `extracted` or `out_of_scope` are skipped. `unresolved` and `failed` are fetched again. A crawl upserts the parents it kept. A URL checkpointed `out_of_scope` deletes that parent and its child SKUs. Other parents stay. Publishing drops a row whose breadcrumb fails `scope_path`, or whose `category_key` does not match that breadcrumb. Starting the desk does not rewrite `data/sample/`. `config.yaml` supplies the origin, user agent, seeds, and default delay. SQLite settings override the delay and the caps for a desk run. `CLAUDE_API_KEY` stays in `.env`. The pipeline log does not contain it.
 
 **Why.** Listing pages do not include the product grid until JavaScript runs, and `?page=` is disallowed. `products.xml` is the allowed list of product URLs. Membership is known only after the product page is read. Remembering out-of-scope URLs is what lets the next run move past them.
 
-**Tradeoff.** The first Refresh can keep zero new parents and only checkpoint rejects. The job message reports fetched, kept, out of scope, unresolved, and failed. Concurrency stays at 1. `max_concurrency` and `crawl_interval_minutes` are stored for a later worker and do not start extra fetches or a timer. A second worker would need the same clock, or the delay would no longer be one gap between requests.
+**Tradeoff.** The first Refresh can keep zero new parents and only checkpoint rejects. The job message reports fetched, kept, out of scope, unresolved, and failed. Concurrency stays at 1. `max_concurrency` and `crawl_interval_minutes` are stored for a later worker and do not start extra fetches or a timer. A second worker would need the same limiter, or the delay would no longer be one gap between requests.
+
+## Robots and pagination
+
+`https://www.safcodental.com/robots.txt` is one group, `User-agent: *`. The copy from 2026-10-15 is `docs/recon/robots_2026-10-15.txt`. The two rules that block the listing pager are:
+
+```
+Disallow: /*?p=
+Disallow: /*?page=
+```
+
+Seed paths (`/catalog/sutures-surgical-products`, `/catalog/gloves`), one level of child category under each seed, and `/product/<slug>` are allowed. `products.xml` lists 3,939 product URLs, none with a query string. `catalog.xml` lists 282 category URLs and is not the crawl queue.
+
+The pager on the rendered listing is the disallowed form. Sutures page 1 says "Items 1-12 of 55" and links `?page=1` through `?page=5`. Gloves page 1 says "Items 1-12 of 93" and links `?page=1` through `?page=7`. The navigator records those hrefs and does not fetch them. `Fetcher` refuses `?page=` and `?p=` even when the parsed policy would allow the URL, and it refuses a redirect that lands on one. There is no load-more control. `?product_list_limit=` does not appear on the pages that were opened.
+
+Page 1 has a second gap. The fixtures in `tests/fixtures/listing_sutures.html` and `listing_gloves.html` are the DOM after JavaScript, and each has 12 product cards. A live fetch of the same seed URL does not include that grid. `data/sample/pipeline-log.jsonl` records 0 cards on both seeds: sutures returned 1 product URL and 8 child category URLs, gloves returned 1 product URL and 6 child category URLs. The five product pages fetched after that (Lucitone, Lucitone Liquid, Ultra silver alloy, Valiant Ph.D., Valiant) were out of scope. Child category HTML from a raw fetch can be just as empty of product links, so the queue falls through to `products.xml`.
+
+Algolia is what fills the grid in the browser. Calling it, or requesting `?page=`, would get past the disallow. This desk does neither. Parents that never appear as an allowed href are reached by walking the sitemap and keeping a page when the breadcrumb is sutures or gloves. At 3 seconds per URL that walk is multi-hour, and a run capped by `max_pages_per_category` can finish with zero newly kept parents. The checkpoint table is what lets the next run skip the rejects.
 
 ## Agent responsibilities
 
@@ -142,16 +160,21 @@ Grain is one row per child SKU. The same columns are in `catalog_rows`, `data/sa
 | alternatives | JSON list of recommendation cards (`name`, `url`). `[]` in the checked-in sample |
 | product_slug | URL slug |
 
-The checked-in sample is 160 child rows across 25 parent products: 13 under sutures and 12 under gloves, including Surgifoam, Perma Sharp sutures, and Lavender Nitrile. Every row's breadcrumb passes `scope_path`, and `category_key` matches that breadcrumb. `alternatives` is `[]` on every row. A blank breadcrumb is left out rather than labeled sutures. Photos for fetched sheets are under `data/sample/images/` and served at `/images/<slug>.jpg`. Safco returns JPEG for these catalog photos, so the files are `.jpg` rather than `.png`. Listing page 2 is still not fetched.
+The checked-in files hold 285 child rows across 40 parent products: 28 labeled sutures and 12 labeled gloves. Of those, 160 rows and 25 parents have a breadcrumb `scope_path` accepts. That slice is 13 parents under Sutures & surgical products (96 rows, including Surgifoam and Perma Sharp sutures) and 12 parents under Dental Exam Gloves (64 rows, including Lavender Nitrile). On those rows `category_key` matches the breadcrumb.
+
+The other 125 rows are still in the files. 67 rows are one parent, Clearance Item, path `Clearance / Safco Clearance`. 58 rows are 14 parents under Acrylics and reline (13 reline materials, including Coe-Soft, GC Reline, and Kooliner, plus Jet Denture Repair Acrylic) stored with `category_key` sutures. Publish would drop both groups. These files were not rewritten after that gate, so `test_checked_in_sample_stays_inside_the_two_categories` fails on the Clearance path.
+
+`alternatives` is `[]` on all 285 rows. `pack_size` is blank on 155 rows. `item_group` is blank on 94 rows. 25 photos are under `data/sample/images/` and served at `/images/<slug>.jpg`. Safco returns JPEG for these catalog photos, so the files are `.jpg`. Listing page 2 is not in the sample.
 
 ## Limitations
 
-- Listing page 2 and later use `?page=`, which `robots.txt` disallows. This desk does not fetch them and does not call Algolia to get around that.
-- The queue prefers product links found on the seed pages and on one level of child category pages. Pages past the first listing page are still only reachable from `products.xml` (3,939 `/product/` URLs). Child category HTML may not contain the product grid. This pass does not show that a raised cap finishes either category. Sutures page 1 says 55 parents. Gloves page 1 says 93. The sample has 25 parents.
+- Listing page 2 and later use `?page=`, which `robots.txt` disallows (`/*?page=` and `/*?p=`). Sutures links pages 1–5 (55 parents on the rendered page). Gloves links pages 1–7 (93 parents). Those URLs are recorded and not fetched. Algolia is not called. See [Robots and pagination](#robots-and-pagination).
+- A live fetch of either seed returns the category shell without the product grid (0 cards in `data/sample/pipeline-log.jsonl`). The 12-card fixtures are post-JavaScript DOM. Child category pages from a raw fetch can be empty of product links too, so the rest of each category is reached only through `products.xml` (3,939 `/product/` URLs) and the scope gate. The in-scope slice of this sample is 13 of about 55 suture parents and 12 of about 93 glove parents.
 - A page with neither a category class nor a breadcrumb is unresolved. It is not stored, and it is fetched again on a later run.
 - The scope model runs only when the body class and the breadcrumb each name a seed and they differ. A crawl that never hits that case, or that has no `CLAUDE_API_KEY`, does not call Claude for scope.
-- `alternatives` is `[]` on every checked-in row. Those cards are filled in the browser. Algolia is not called.
-- Pack size is parsed from text such as `12/box`. A child with no count in the name or specification leaves `pack_size` blank. `item_group` is blank when `masterData` has no group.
+- The checked-in files still hold 125 rows the scope gate would drop: Clearance Item (67 rows) and 14 acrylic and reline parents (58 rows) labeled sutures. `test_checked_in_sample_stays_inside_the_two_categories` fails on `Clearance / Safco Clearance`.
+- `alternatives` is `[]` on all 285 rows. Those cards are filled in the browser. Algolia is not called.
+- Pack size is parsed from text such as `12/box`. 155 rows have no count in the name or specification, so `pack_size` is blank. `item_group` is blank on 94 rows, where `masterData` has no group.
 
 ## Failure handling
 
@@ -159,9 +182,9 @@ The checked-in sample is 160 child rows across 25 parent products: 13 under sutu
 - A page with JSON-LD and no `masterData` is kept as a parent row when it is in scope, and marked recovered.
 - A breadcrumb outside both seeds is checkpointed `out_of_scope` even when the body class matches. That parent and its child SKUs are removed if they were stored earlier. The checkpoint stays, so the next run skips the URL. A path that starts with Clearance or Equipment stays out of scope.
 - When the body class and the breadcrumb name different seeds, the model chooses. No key, or an unusable reply, checkpoints the page `unresolved` and does not store it. The request does not include the page HTML or the API key in the log.
-- 429, 5xx, and timeouts are retried. A robots mismatch is not retried and is not requested. One failed URL does not discard the others.
+- 429 and 503 honor `Retry-After`, capped at 60 seconds. Other 5xx responses and timeouts use the configured delay. A robots mismatch is not retried and is not requested. One failed URL does not discard the others.
 - The validator rejects a row with no name, and a second copy of a slug or child SKU.
-- Publish drops a row that fails `scope_path`, so a later export cannot put a Clearance row back into `data/sample/`.
+- Publish drops a row that fails `scope_path`. A later export leaves Clearance and Acrylics and reline out of `data/sample/`. The files checked in now still contain both, because they were written before that gate.
 
 ## How you would scale to full-site crawling
 
@@ -170,10 +193,10 @@ The checked-in sample is 160 child rows across 25 parent products: 13 under sutu
 3. Queue product links from those pages, then the remaining `products.xml` slugs. Skip URLs already `extracted` or `out_of_scope`.
 4. Run the classifier, extractor, and scope gate. Fetch `unresolved` and `failed` again.
 5. Upsert by slug. Replace child SKUs for that parent only. Delete a parent when this run checkpoints its URL `out_of_scope`.
-6. Keep concurrency at 1 until the delay clock is shared. The delay default is 3 seconds, and settings cannot put it under 1. One run stops at `max_products` newly kept parents and at `max_pages_per_category` product fetches. Child category fetches are extra.
+6. Keep concurrency at 1 until the limiter is shared. The delay default is 3 seconds, and settings cannot put it under 1. One run stops at `max_products` newly kept parents and at `max_pages_per_category` product fetches. Child category fetches are extra.
 7. Publish CSV, JSON, and Excel from the rows that pass `scope_path`.
 
-Raising `max_pages_per_category` continues that queue, so discovered links are not stuck behind sitemap order. Products that never appear as hrefs on those category pages are still only reached by walking `products.xml`. At 3 seconds per URL, the 3,939 product sitemap is a multi-hour run. The checkpoint table is what makes that resumable. This sample does not finish either category.
+Raising `max_pages_per_category` continues that queue, so discovered links are not stuck behind sitemap order. A live category fetch currently contributes almost no product hrefs, and `?page=` stays unfetched, so most parents are still only reached by walking `products.xml`. At 3 seconds per URL, the 3,939 product sitemap is a multi-hour run. The checkpoint table is what makes that resumable. The in-scope slice here is 13 suture parents and 12 glove parents, short of the 55 and 93 on the rendered listing pages.
 
 ## How you would monitor data quality
 

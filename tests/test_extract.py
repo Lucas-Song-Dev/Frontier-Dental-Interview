@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import html
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "web"))
 
-from extract import extract_product, image_urls, pack_size, pagination_links  # noqa: E402
+from extract import (  # noqa: E402
+    extract_listing,
+    extract_product,
+    image_urls,
+    pack_size,
+    pagination_links,
+)
 from pipeline import run  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -134,6 +143,157 @@ class FixtureExtractionTests(unittest.TestCase):
         self.assertEqual(product.variants, [])
         self.assertEqual(product.name, "Widget")
         self.assertEqual(product.sku, "PARENT")
+
+
+class ListingCardTests(unittest.TestCase):
+    def test_json_ld_products_skip_subcategory_pages(self) -> None:
+        page = _ld(
+            _item_list(
+                "Subcategories",
+                [
+                    {
+                        "@type": "ListItem",
+                        "item": {
+                            "@type": "CollectionPage",
+                            "name": "Nitrile gloves",
+                            "url": "https://www.safcodental.com/catalog/gloves/nitrile-gloves",
+                        },
+                    }
+                ],
+            ),
+            _item_list(
+                "Products",
+                [
+                    _list_item("lavender-nitrile", "Lavender Nitrile", "Halyard", "38.99"),
+                    _list_item(
+                        "aquasoft",
+                        "Aquasoft",
+                        "Halyard",
+                        "9.50",
+                        url_on_item=False,
+                        brand_as_string=True,
+                    ),
+                ],
+            ),
+        )
+        cards = extract_listing(page, "gloves").cards
+        self.assertEqual(
+            [(card.slug, card.name, card.manufacturer, card.price) for card in cards],
+            [
+                ("lavender-nitrile", "Lavender Nitrile", "Halyard", "$38.99"),
+                ("aquasoft", "Aquasoft", "Halyard", "$9.50"),
+            ],
+        )
+
+    def test_hit_grid_is_used_when_json_ld_has_no_products(self) -> None:
+        page = (
+            '<li class="ais-Hits-item">'
+            '<a href="https://www.safcodental.com/product/from-hit">x</a>'
+            '<h3 itemprop="name">From hit</h3>'
+            '<h3 class="manufacturer-name">Maker</h3>'
+            "<span>$4.00</span>"
+            "</li>"
+        )
+        cards = extract_listing(page, "gloves").cards
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].slug, "from-hit")
+        self.assertEqual(cards[0].name, "From hit")
+        self.assertEqual(cards[0].manufacturer, "Maker")
+        self.assertEqual(cards[0].price, "$4.00")
+
+    def test_json_ld_wins_when_both_lists_differ(self) -> None:
+        page = _ld(
+            _item_list("Products", [_list_item("from-json", "From JSON", "Brand", "1.00")])
+        )
+        page += (
+            '<li class="ais-Hits-item">'
+            '<a href="https://www.safcodental.com/product/from-hit">x</a>'
+            '<h3 itemprop="name">From hit</h3>'
+            "</li>"
+        )
+        cards = extract_listing(page, "gloves").cards
+        self.assertEqual([card.slug for card in cards], ["from-json"])
+
+    def test_a_broken_json_ld_script_does_not_drop_the_next_list(self) -> None:
+        page = (
+            '<script type="application/ld+json">{not json</script>'
+            + _ld(_item_list("Products", [_list_item("kept", "Kept", "Brand", "2.00")]))
+        )
+        cards = extract_listing(page, "gloves").cards
+        self.assertEqual([card.slug for card in cards], ["kept"])
+
+    def test_fixtures_keep_the_hit_grid_slugs(self) -> None:
+        for name, key in (
+            ("listing_gloves.html", "gloves"),
+            ("listing_sutures.html", "sutures"),
+        ):
+            page = (FIXTURES / name).read_text(encoding="utf-8")
+            cards = extract_listing(page, key).cards
+            self.assertEqual(
+                [(card.slug, card.name, card.manufacturer, card.price) for card in cards],
+                _hit_rows(page),
+                name,
+            )
+
+
+def _ld(*lists: dict[str, object]) -> str:
+    return '<script type="application/ld+json">' + json.dumps(list(lists)) + "</script>"
+
+
+def _item_list(name: str, elements: list[dict[str, object]]) -> dict[str, object]:
+    return {"@type": "ItemList", "name": name, "itemListElement": elements}
+
+
+def _list_item(
+    slug: str,
+    name: str,
+    brand: str,
+    price: str,
+    *,
+    url_on_item: bool = True,
+    brand_as_string: bool = False,
+) -> dict[str, object]:
+    url = f"https://www.safcodental.com/product/{slug}"
+    brand_value: object = brand if brand_as_string else {"@type": "Brand", "name": brand}
+    item: dict[str, object] = {
+        "@type": "Product",
+        "name": name,
+        "brand": brand_value,
+        "offers": {"@type": "Offer", "price": price},
+    }
+    element: dict[str, object] = {"@type": "ListItem", "item": item}
+    if url_on_item:
+        item["url"] = url
+    else:
+        element["url"] = url
+    return element
+
+
+def _hit_rows(page: str) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str]] = []
+    seen: set[str] = set()
+    for chunk in page.split('<li class="ais-Hits-item')[1:]:
+        href = re.search(r'href="https://www\.safcodental\.com/product/([^"]+)"', chunk)
+        name = re.search(r'itemprop="name"[^>]*>\s*([^<]+)', chunk)
+        if not href or not name:
+            continue
+        slug = unquote(href.group(1)).strip("/")
+        if slug in seen:
+            continue
+        seen.add(slug)
+        maker = re.search(r'manufacturer-name[^>]*>\s*([^<]+)', chunk)
+        amount = re.search(r"\$\s*([0-9,]+\.[0-9]{2})", chunk)
+        text = re.sub(r"\s+", " ", name.group(1)).strip()
+        brand = re.sub(r"\s+", " ", maker.group(1)).strip() if maker else ""
+        rows.append(
+            (
+                slug,
+                html.unescape(html.unescape(text)),
+                html.unescape(html.unescape(brand)),
+                f"${amount.group(1).replace(',', '')}" if amount else "",
+            )
+        )
+    return rows
 
 
 if __name__ == "__main__":

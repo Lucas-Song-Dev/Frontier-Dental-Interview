@@ -569,6 +569,8 @@ def upsert_crawl(catalog: object) -> dict[str, int]:
     Child rows are replaced only for a parent that was extracted again.
     A URL checkpointed out_of_scope drops that parent and its children.
     An empty product list leaves the other catalog products in place.
+    An empty card list leaves that category's listing cards in place.
+    A card is saved when this run extracted the parent or the parent is already stored.
     """
     categories = catalog.categories  # type: ignore[attr-defined]
     products = catalog.products  # type: ignore[attr-defined]
@@ -584,11 +586,16 @@ def upsert_crawl(catalog: object) -> dict[str, int]:
                 """,
                 [(key, category.title, category.stats) for key, category in categories.items()],
             )
-            for key in categories:
-                connection.execute("DELETE FROM listing_cards WHERE category_key = ?", (key,))
+            stored = {
+                str(row["slug"]) for row in connection.execute("SELECT slug FROM products")
+            }
             card_rows = []
             for category in categories.values():
+                if not category.cards:
+                    continue
+                connection.execute("DELETE FROM listing_cards WHERE category_key = ?", (category.key,))
                 for card in category.cards:
+                    saved = bool(card.saved) or card.slug in stored or card.slug in products
                     card_rows.append(
                         (
                             category.key,
@@ -596,7 +603,7 @@ def upsert_crawl(catalog: object) -> dict[str, int]:
                             card.name,
                             card.manufacturer,
                             price_amount(card.price),
-                            1 if card.saved else 0,
+                            1 if saved else 0,
                         )
                     )
             connection.executemany(

@@ -4,123 +4,13 @@
 {"stage": "navigator", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "allowed", "detail": "1 product URLs and 6 category URLs on this page have no disallowed query."}
 {"stage": "classifier", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "listing", "detail": "Labeled from the URL and page markers."}
 {"stage": "extractor", "subject": "https://www.safcodental.com/catalog/gloves", "outcome": "extracted", "detail": "Dental Exam Gloves: 0 cards on this listing page."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/surgifoam-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/surgifoam-reg", "outcome": "extracted", "detail": "Surgifoam: 2 child SKUs, brand Ethicon."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/surgifoam-reg", "outcome": "accepted", "detail": "Surgifoam stored with 2 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/ossif-i-sem-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/ossif-i-sem-trade", "outcome": "extracted", "detail": "OSSIF-i sem: 18 child SKUs, brand Surgical Esthetics."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/ossif-i-sem-trade", "outcome": "accepted", "detail": "OSSIF-i sem stored with 18 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/orasoothe-reg-sockit-gel", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/orasoothe-reg-sockit-gel", "outcome": "extracted", "detail": "OraSoothe Sockit!: 3 child SKUs, brand Septodont."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/orasoothe-reg-sockit-gel", "outcome": "accepted", "detail": "OraSoothe Sockit! stored with 3 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/ossify-sup-reg-sup-min-demin-cortical-cancellous-bone-graft", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/ossify-sup-reg-sup-min-demin-cortical-cancellous-bone-graft", "outcome": "extracted", "detail": "Ossify Min/Demin Cortical Cancellous Bone Graft: 3 child SKUs, brand Surgical Esthetics."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/ossify-sup-reg-sup-min-demin-cortical-cancellous-bone-graft", "outcome": "accepted", "detail": "Ossify Min/Demin Cortical Cancellous Bone Graft stored with 3 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/foundation-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/foundation-trade", "outcome": "extracted", "detail": "Foundation: 3 child SKUs, brand J. Morita."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/foundation-trade", "outcome": "accepted", "detail": "Foundation stored with 3 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/collashield-trade-collagen-membrane", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/collashield-trade-collagen-membrane", "outcome": "extracted", "detail": "CollaShield Collagen Membrane: 3 child SKUs, brand Surgical Esthetics."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/collashield-trade-collagen-membrane", "outcome": "accepted", "detail": "CollaShield Collagen Membrane stored with 3 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/regenafill-sup-trade-sup-bone-graft-plug", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/regenafill-sup-trade-sup-bone-graft-plug", "outcome": "extracted", "detail": "Regenafill Bone Graft Plug: 2 child SKUs, brand Surgical Esthetics."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/regenafill-sup-trade-sup-bone-graft-plug", "outcome": "accepted", "detail": "Regenafill Bone Graft Plug stored with 2 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/hemostat-sup-trade-sup", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/hemostat-sup-trade-sup", "outcome": "extracted", "detail": "HemoStat: 1 child SKUs, brand Medicom."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/hemostat-sup-trade-sup", "outcome": "accepted", "detail": "HemoStat stored with 1 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/surgicel-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/surgicel-reg", "outcome": "extracted", "detail": "SURGICEL Original Absorbable Hemostat: 1 child SKUs, brand Ethicon."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/surgicel-reg", "outcome": "accepted", "detail": "SURGICEL Original Absorbable Hemostat stored with 1 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/feather-sup-reg-nbsp-sup-microsurgical-blades", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/feather-sup-reg-nbsp-sup-microsurgical-blades", "outcome": "extracted", "detail": "Feather Microsurgical Blades: 4 child SKUs, brand J. Morita."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/feather-sup-reg-nbsp-sup-microsurgical-blades", "outcome": "accepted", "detail": "Feather Microsurgical Blades stored with 4 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/soft-tissue-trimmer", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/soft-tissue-trimmer", "outcome": "extracted", "detail": "Soft Tissue Trimmer: 2 child SKUs, brand Kerr Rotary."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/soft-tissue-trimmer", "outcome": "accepted", "detail": "Soft Tissue Trimmer stored with 2 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/ossify-sup-reg-sup-dbm-cortical-fiber-bone-graft", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/ossify-sup-reg-sup-dbm-cortical-fiber-bone-graft", "outcome": "extracted", "detail": "Ossify DBM Cortical Fiber Bone Graft: 6 child SKUs, brand Surgical Esthetics."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/ossify-sup-reg-sup-dbm-cortical-fiber-bone-graft", "outcome": "accepted", "detail": "Ossify DBM Cortical Fiber Bone Graft stored with 6 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/lavender-nitrile", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/lavender-nitrile", "outcome": "extracted", "detail": "Lavender Nitrile: 5 child SKUs, brand Halyard."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/lavender-nitrile", "outcome": "accepted", "detail": "Lavender Nitrile stored with 5 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/beesure-ultraslim-nitrile", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/beesure-ultraslim-nitrile", "outcome": "extracted", "detail": "BeeSure UltraSlim Nitrile: 4 child SKUs, brand EcoBee."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/beesure-ultraslim-nitrile", "outcome": "accepted", "detail": "BeeSure UltraSlim Nitrile stored with 4 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/aurelia-reg-amazing-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/aurelia-reg-amazing-reg", "outcome": "extracted", "detail": "Aurelia Amazing: 5 child SKUs, brand Supermax."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/aurelia-reg-amazing-reg", "outcome": "accepted", "detail": "Aurelia Amazing stored with 5 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/aquasoft", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/aquasoft", "outcome": "extracted", "detail": "Aquasoft: 5 child SKUs, brand Halyard."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/aquasoft", "outcome": "accepted", "detail": "Aquasoft stored with 5 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/beesure-reg-superslim-trade-nitrile", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/beesure-reg-superslim-trade-nitrile", "outcome": "extracted", "detail": "BeeSure SuperSlim Nitrile: 4 child SKUs, brand EcoBee."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/beesure-reg-superslim-trade-nitrile", "outcome": "accepted", "detail": "BeeSure SuperSlim Nitrile stored with 4 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/alasta-sup-reg-sup", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/alasta-sup-reg-sup", "outcome": "extracted", "detail": "Alasta: 10 child SKUs, brand Dash."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/alasta-sup-reg-sup", "outcome": "accepted", "detail": "Alasta stored with 10 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/microflex-sup-reg-sup-ultraform-sup-trade-sup", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/microflex-sup-reg-sup-ultraform-sup-trade-sup", "outcome": "extracted", "detail": "Microflex Ultraform: 8 child SKUs, brand Ansell."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/microflex-sup-reg-sup-ultraform-sup-trade-sup", "outcome": "accepted", "detail": "Microflex Ultraform stored with 8 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/black-maxx-sup-reg-sup", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/black-maxx-sup-reg-sup", "outcome": "extracted", "detail": "Black Maxx Thin with Glide Assist Technology: 5 child SKUs, brand Dash."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/black-maxx-sup-reg-sup", "outcome": "accepted", "detail": "Black Maxx Thin with Glide Assist Technology stored with 5 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/aurelia-reg-vibrant-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/aurelia-reg-vibrant-trade", "outcome": "extracted", "detail": "Aurelia Vibrant: 4 child SKUs, brand Supermax."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/aurelia-reg-vibrant-trade", "outcome": "accepted", "detail": "Aurelia Vibrant stored with 4 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/microflex-reg-xceed-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/microflex-reg-xceed-reg", "outcome": "extracted", "detail": "Microflex Xceed: 5 child SKUs, brand Ansell."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/microflex-reg-xceed-reg", "outcome": "accepted", "detail": "Microflex Xceed stored with 5 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/gloveup-sup-reg-sup", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/gloveup-sup-reg-sup", "outcome": "extracted", "detail": "GloveUp: 5 child SKUs, brand Dash."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/gloveup-sup-reg-sup", "outcome": "accepted", "detail": "GloveUp stored with 5 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/aurelia-reg-blush-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/aurelia-reg-blush-reg", "outcome": "extracted", "detail": "Aurelia Blush: 4 child SKUs, brand Supermax."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/aurelia-reg-blush-reg", "outcome": "accepted", "detail": "Aurelia Blush stored with 4 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/perma-sharp-reg-sutures", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/perma-sharp-reg-sutures", "outcome": "extracted", "detail": "Perma Sharp sutures: 48 child SKUs, brand Hu-Friedy."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/perma-sharp-reg-sutures", "outcome": "accepted", "detail": "Perma Sharp sutures stored with 48 child SKUs."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/clearance-item", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/clearance-item", "outcome": "extracted", "detail": "Clearance Item: 67 child SKUs, brand Safco Dental."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/clearance-item", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/jet-denture-repair-acrylic", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/jet-denture-repair-acrylic", "outcome": "extracted", "detail": "Jet Denture Repair Acrylic: 18 child SKUs, brand Safco Dental."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/jet-denture-repair-acrylic", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/dentusil-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/dentusil-trade", "outcome": "extracted", "detail": "DentuSil: 1 child SKUs, brand Safco Dental."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/dentusil-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/coe-soft-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/coe-soft-trade", "outcome": "extracted", "detail": "Coe-Soft Resilient Denture Liner: 6 child SKUs, brand GC America."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/coe-soft-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/gc-reline-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/gc-reline-trade", "outcome": "extracted", "detail": "GC Reline: 1 child SKUs, brand GC America."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/gc-reline-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/kooliner-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/kooliner-trade", "outcome": "extracted", "detail": "Kooliner: 1 child SKUs, brand GC America."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/kooliner-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/lynal-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/lynal-reg", "outcome": "extracted", "detail": "Lynal: 1 child SKUs, brand Dentsply Sirona."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/lynal-reg", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/sofreliner-tough-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/sofreliner-tough-reg", "outcome": "extracted", "detail": "Sofreliner Tough: 6 child SKUs, brand Tokuyama."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/sofreliner-tough-reg", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/softline-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/softline-trade", "outcome": "extracted", "detail": "SoftLine: 6 child SKUs, brand Kerr Restoratives."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/softline-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/trusoft-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/trusoft-trade", "outcome": "extracted", "detail": "Trusoft Resilient Denture Acrylic Relining Material: 1 child SKUs, brand Keystone Industries."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/trusoft-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/truliner-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/truliner-trade", "outcome": "extracted", "detail": "Truliner PEMA Denture Corrective Relining Material: 6 child SKUs, brand Keystone Industries."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/truliner-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/visco-gel-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/visco-gel-reg", "outcome": "extracted", "detail": "Visco-Gel: 1 child SKUs, brand Dentsply Sirona."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/visco-gel-reg", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/rebase-iii-fast", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/rebase-iii-fast", "outcome": "extracted", "detail": "Rebase III Fast: 4 child SKUs, brand Tokuyama."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/rebase-iii-fast", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/mucosoft-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/mucosoft-reg", "outcome": "extracted", "detail": "MucoSoft: 3 child SKUs, brand Parkell."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/mucosoft-reg", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
-{"stage": "classifier", "subject": "https://www.safcodental.com/product/mucohard-trade", "outcome": "product", "detail": "Labeled from the URL and page markers."}
-{"stage": "extractor", "subject": "https://www.safcodental.com/product/mucohard-trade", "outcome": "extracted", "detail": "MucoHard+: 3 child SKUs, brand Parkell."}
-{"stage": "validator", "subject": "https://www.safcodental.com/product/mucohard-trade", "outcome": "out_of_scope", "detail": "Breadcrumb is outside sutures and gloves."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/lucitone-199-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/lucitone-199-reg", "outcome": "out_of_scope", "detail": "Lucitone 199 is out of scope."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/lucitone-reg-liquid", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/lucitone-reg-liquid", "outcome": "out_of_scope", "detail": "Lucitone Liquid is out of scope."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/ultra-trade-silver-alloy", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/ultra-trade-silver-alloy", "outcome": "out_of_scope", "detail": "Ultra silver alloy is out of scope."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/valiant-reg-ph-d-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/valiant-reg-ph-d-reg", "outcome": "out_of_scope", "detail": "Valiant Ph.D. is out of scope."}
+{"stage": "classifier", "subject": "https://www.safcodental.com/product/valiant-reg", "outcome": "product", "detail": "Labeled from the URL and page markers."}
+{"stage": "validator", "subject": "https://www.safcodental.com/product/valiant-reg", "outcome": "out_of_scope", "detail": "Valiant is out of scope."}

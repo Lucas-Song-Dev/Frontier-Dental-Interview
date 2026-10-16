@@ -6,6 +6,7 @@ import html
 import json
 import re
 from dataclasses import dataclass, field
+from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
 _PACK = re.compile(r"(\d[\d,]*)\s*/\s*([A-Za-z]+)")
@@ -230,6 +231,19 @@ def extract_product(page: str, slug: str, category: str, url: str = "") -> Parse
     )
 
 
+def listing_cards(page: str) -> list[ParsedCard]:
+    """Product cards on a listing page.
+
+    A non-empty JSON-LD product ItemList is the list the server sent. The hit
+    grid is the fallback for HTML saved after JavaScript filled the container.
+    The two lists are not merged.
+    """
+    linked = _jsonld_cards(page)
+    if linked:
+        return linked
+    return _hit_cards(page)
+
+
 def extract_listing(page: str, key: str) -> ParsedListing:
     heading = re.search(r"<h1[^>]*>(.*?)</h1>", page, re.S)
     title = unescape(re.sub(r"<[^>]+>", "", heading.group(1))) if heading else key
@@ -239,6 +253,113 @@ def extract_listing(page: str, key: str) -> ParsedListing:
         block = unescape(re.sub(r"<[^>]+>", " ", page[stats_at : stats_at + 700]))
         found = re.search(r"Items\s+\d+\s*-\s*\d+\s+of\s+\d+", block)
         stats = found.group(0) if found else ""
+    return ParsedListing(key=key, title=title, stats=stats, cards=listing_cards(page))
+
+
+def _jsonld_cards(page: str) -> list[ParsedCard]:
+    cards: list[ParsedCard] = []
+    seen: set[str] = set()
+    for match in _JSON_LD.finditer(page):
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        for node in _json_nodes(data):
+            if "ItemList" not in _node_types(node):
+                continue
+            elements = node.get("itemListElement")
+            if not isinstance(elements, list):
+                continue
+            for element in elements:
+                item = _as_dict(element)
+                if item is None:
+                    continue
+                card = _card_from_list_item(item)
+                if card is None or card.slug in seen:
+                    continue
+                seen.add(card.slug)
+                cards.append(card)
+    return cards
+
+
+def _json_nodes(data: object) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    pending: list[object] = [data]
+    while pending:
+        current = pending.pop(0)
+        if isinstance(current, list):
+            pending.extend(current)
+            continue
+        node = _as_dict(current)
+        if node is None:
+            continue
+        found.append(node)
+        graph = node.get("@graph")
+        if isinstance(graph, list):
+            pending.extend(graph)
+    return found
+
+
+def _card_from_list_item(element: dict[str, Any]) -> ParsedCard | None:
+    nested = _as_dict(element.get("item"))
+    product = nested if nested is not None and "Product" in _node_types(nested) else None
+    if product is None and "Product" in _node_types(element):
+        product = element
+    if product is None:
+        return None
+    url = product.get("url") or element.get("url") or ""
+    slug = _product_slug(url if isinstance(url, str) else "")
+    if not slug:
+        return None
+    name = unescape(str(product.get("name") or element.get("name") or ""))
+    return ParsedCard(
+        slug=slug,
+        name=name,
+        manufacturer=_brand(cast(dict[Any, Any], product)),
+        price=_offer_price(product.get("offers")),
+    )
+
+
+def _as_dict(value: object) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return cast(dict[str, Any], value)
+    return None
+
+
+def _node_types(node: dict[str, Any]) -> set[str]:
+    raw = node.get("@type")
+    if isinstance(raw, str):
+        return {raw}
+    if isinstance(raw, list):
+        return {item for item in raw if isinstance(item, str)}
+    return set()
+
+
+def _product_slug(url: str) -> str:
+    if "/product/" not in url:
+        return ""
+    slug = url.split("/product/", 1)[1]
+    slug = unquote(slug.split("?", 1)[0].split("#", 1)[0]).strip("/")
+    return slug
+
+
+def _offer_price(offers: object) -> str:
+    if isinstance(offers, list):
+        offers = offers[0] if offers else None
+    if not isinstance(offers, dict):
+        return ""
+    price = offers.get("price")
+    if price in (None, ""):
+        return ""
+    text = str(price).replace(",", "").strip()
+    if not text:
+        return ""
+    if text.startswith("$"):
+        return text
+    return money(text)
+
+
+def _hit_cards(page: str) -> list[ParsedCard]:
     cards: list[ParsedCard] = []
     seen: set[str] = set()
     for chunk in page.split('<li class="ais-Hits-item')[1:]:
@@ -260,7 +381,7 @@ def extract_listing(page: str, key: str) -> ParsedListing:
                 price=money(amount.group(1).replace(",", "")) if amount else "",
             )
         )
-    return ParsedListing(key=key, title=title, stats=stats, cards=cards)
+    return cards
 
 
 def category_path(page: str, product_name: str) -> str:
